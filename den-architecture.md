@@ -56,7 +56,7 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Scope:**
 - Formal statement of each foundational principle with implementation implications
-- Named pressure points the architecture is designed to close: payment processor capture pattern, legislative backdoor mandate pattern ([EARN IT Act](https://www.eff.org/deeplinks/2022/02/earn-it-act-back-and-its-still-unconstitutional), [Online Safety Act](https://www.eff.org/pages/uk-online-safety-bill-massive-threat-online-privacy-security-and-speech), [Chat Control](https://www.patrick-breyer.de/en/posts/chat-control/))
+- Named pressure points the architecture is designed to close: payment processor capture pattern, legislative backdoor mandate pattern ([EARN IT Act](https://www.eff.org/deeplinks/2020/03/earn-it-act-violates-constitutionl), [Online Safety Act](https://www.eff.org/pages/uk-online-safety-bill-massive-threat-online-privacy-security-and-speech), [Chat Control](https://www.patrick-breyer.de/en/posts/chat-control/))
 - Architectural impossibility as the defense against both
 - What it means structurally that no single entity holds a kill switch
 
@@ -73,12 +73,14 @@ These are the non-negotiable architectural assumptions against which every other
 **Scope:**
 - Pseudonymous by default — no real name required at protocol level
 - Wallet address as primary identity anchor
+- Wallet address is pseudonymous, not anonymous. On-chain transaction history is publicly visible and outside the protocol's control.
 - Authentication standard: [EIP-4361 (Sign-In with Ethereum)](https://eips.ethereum.org/EIPS/eip-4361) for Ethereum Virtual Machine (EVM) compatible chains, [Wallet Adapter](https://github.com/anza-xyz/wallet-adapter) for Solana, TronWeb for TRON
 - KYC (identity verification required by financial regulations) only at fiat payout edge, held by the fiat processor, never by the protocol
 - Protocol never holds real identity information
 - Creator identity portability — minimum portable data set formally defined: keys, subscriber list, content references, pseudonymous identity
 - Multi-role wallet handling — same wallet address can hold multiple denizen roles simultaneously; roles are governed by identical protocol rules regardless of who holds them
 - Hoster identity — instance operator wallet address as instance identity anchor
+- Subscription state (wallet address, tier, active period) is publicly visible on-chain as a necessary consequence of smart contract-based access control. This is not obscured.
 
 **Design rationale — pseudonymous by default:** Real identity requirements at the protocol level create a single point of pressure. A protocol that knows who its creators are can be compelled to reveal them. A protocol that architecturally does not hold that information cannot be compelled to reveal what it does not have.
 
@@ -117,7 +119,9 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Design rationale — fiat as sandboxed guest:** Fiat processor capability to operate as a guest within the ecosystem does not translate to structural power over the protocol. The spec defines precisely what sandboxed means: fiat processors can offer onramp and offramp services at the edges of the ecosystem; they cannot influence content policy, creator account decisions, or protocol governance; their exit does not affect the primary payment rails.
 
-**Open questions:** Precise smart contract subscription logic — the exact mechanism by which payment triggers subscription state and subscription state is verified at access time. This is a technical implementation decision to be resolved during spec drafting. Does not affect architectural decisions above.
+**Precise smart contract subscription logic:** direct on-chain transfer triggering subscription state; auto-renewal via pre-approved allowance is client-layer opt-in; manual renewal always available.
+
+**Open questions:** None. This section is fully resolved.
 
 ---
 
@@ -141,7 +145,9 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Design rationale — instance failure distinction:** Deliberate operator-initiated removal is a governed process with defined timelines (see Section 7). Instance failure is an infrastructure event handled by the portability guarantee and IPFS redundancy. The spec must distinguish these so the governed process cannot be bypassed by claiming infrastructure failure.
 
-**Open questions:** Precise encryption key derivation model — the exact cryptographic mechanism. Technical implementation decision, does not affect architectural decisions above.
+**Precise encryption key derivation model:** on-demand derivation from master secret; master secret stored on instance encrypted to creator wallet public key; no stored content keys; no key bundles; no rotation schedule.
+
+**Open questions:** Flagged for future: Parallel non-superset tiers are a common creator use case. The v0.1 hierarchical constraint covers the standard subscription model but excludes creators who want distinct content tracks at the same tier level. This is a governance extension candidate, not a protocol floor concern.
 
 ---
 
@@ -201,6 +207,7 @@ These are the non-negotiable architectural assumptions against which every other
 - Content unique fingerprint (hash) verification as overclaim deterrent — protocol can verify claimed storage against fingerprints recorded on the blockchain
 - Instance operator minimum obligations — what running a compliant instance requires
 - Above-floor content standard publishing requirement — operators must state their standards publicly and apply them uniformly to all creators on the instance
+- Store the encrypted master secret blob for each hosted Creator
 - The uniformity requirement — above-floor standards cannot be applied selectively; selective application is an abuse of operator position
 - The defined removal process:
   - Active → sunset notice issued (creator and subscriber notification, migration tools activate automatically, window duration is governance parameter, suggested range 30-90 days)
@@ -277,7 +284,9 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Design rationale — fork as designed response:** A governance process that produces no dissenters is not a healthy governance process; it is a captured one. The fork option is not a threat or a failure mode. It is the mechanism by which the community retains ultimate sovereignty over the protocol. The founding maintainer being removable and the fork option being always available are both stated publicly and by design, not as disclaimers but as features.
 
-**Open questions:** Precise approval mechanics — minimum participation threshold, voting weight, timeline. To be resolved before spec drafting of this section.
+**Precise approval mechanics:** Two-phase model; Bootstrap thresholds are 3 non-founding maintainers + 5 independent instances + 12 months elapsed; Bootstrapping circularity acknowledged plainly.
+
+**Open questions:** None. This section is fully resolved.
 
 ---
 
@@ -315,10 +324,11 @@ These are the non-negotiable architectural assumptions against which every other
 - Creator response window — defined as governance parameter; creator can contest the claim within this window
 - Tiered determination by violation category:
   - AI content and real-person content: creator response window → instance operator determination → creator appeal to governance process → deletion only after appeal exhausted or waived; sunset window protection applies during appeal
-  - CSAM: immediate access suspension + automatic escalation to protocol-level review process (not instance operator alone); creator notified; report and evidence go to defined review process; deletion follows process completion; suspension lifted if claim found false
-- False report consequences: reporter wallet flagged on instance; repeated false reports result in loss of subscriber status; false report recorded on the blockchain permanently (pseudonymously)
+  - CCSAM: immediate access suspension + mandatory referral to NCMEC CyberTipline (US), IWF (UK), and the INHOPE network (international); creator notified of suspension and referral immediately; the protocol conducts no independent adjudication; suspension is time-bounded — automatic reinstatement after a governance-parameter period (suggested 30 days) unless law enforcement has issued a preservation order or opened an active investigation, in which case suspension continues until that process concludes; deletion only after legal process finds claim substantiated; suspension lifted and outcome recorded on-chain if claim found unsubstantiated
+- False report consequences: reporter wallet flagged on instance; repeated false reports result in loss of subscriber status; false report recorded on the blockchain permanently (pseudonymously) alongside the outcome — unsubstantiated claims are marked as such in the same record; exoneration is part of the permanent record, not just the allegation
+- Operator-subscriber conflict of interest: reports filed by wallet addresses with a demonstrable operator relationship to the instance hosting the reported content are treated as operator assertions regardless of subscriber status; these reports are automatically elevated to governance review and MUST NOT be adjudicated by the instance operator — the reporter and adjudicator cannot be the same entity
 - Creator appeal: any protocol floor violation determination resulting in content removal is appealable to the governance process; governance can overturn determination, reinstate content, and find abuse of process
-- Instance operator accountability: documented pattern of false violation claims reviewed by governance process; finding of abuse affects instance's standing as protocol participant; other instances may choose not to federate with a flagged instance
+- Instance operator accountability: documented pattern of false violation claims reviewed by governance process; finding of abuse affects instance's standing as protocol participant; other instances may decline to accept Creator migrations from a flagged instance and may exclude it from their instance directory listings
 - Distributed jury concept: explicitly not adopted — dropped in favor of tiered determination and governance appeal; reasoning: legal exposure for jurors on CSAM-adjacent content, gameable selection, inconsistent verdicts contradict the principle that vagueness is an attack surface
 
 **Design rationale — operator cannot self-assert a violation:** The E2EE architecture means instance operators store ciphertext and cannot see content. An operator's assertion that content violates the protocol floor is architecturally meaningless because they cannot verify it independently. Abuse of the removal process requires a subscriber willing to provide false evidence — coordinated false reporting is still possible but significantly harder than unilateral operator action, and carries on-blockchain consequences.
@@ -327,7 +337,9 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Design rationale — why the jury was dropped:** The jury concept was proposed to distribute moderation power and prevent single-actor decisions. The goals were correct. The mechanism introduced three unresolved problems: legal exposure for jurors viewing CSAM-adjacent content in order to make a determination; gameable selection through trust tier manipulation by patient bad actors; inconsistent verdicts on edge cases, which hands ambiguity back as an attack surface. The tiered determination process plus governance appeal achieves the same distribution of power without these problems. The governance process handles genuine edge cases by treating them as evidence that the spec needs clarification — the resolution is a spec amendment that sets precedent, not a one-off jury verdict.
 
-**Open questions:** Precise CSAM escalation process — what "protocol-level review" consists of, who participates, what timeline applies. This is the most sensitive open question in the spec and needs careful design before drafting. Does not affect other sections.
+**Design rationale — routing is not knowledge:** The instance routes reports filed by Subscribers who had plaintext access to the reported content. The instance never processed plaintext content at any point in this flow. Routing a report filed by a third party does not constitute knowledge of the content that report describes. This distinction is the structural answer to legislative arguments that a referral mechanism implies sufficient content knowledge to support a scanning mandate. TCP/IP routes packets containing illegal content without knowledge of those packets. This protocol routes reports filed by Subscribers without knowledge of the content those reports describe. The routing obligation exists; the knowledge does not.
+
+**Open questions:** None. CSAM escalation resolved: mandatory referral to NCMEC/IWF/INHOPE, no internal adjudication, time-bounded suspension with law enforcement action as the threshold for extension. Suspension duration is a governance parameter. See Appendix A for rejection reasoning on internal adjudication alternatives.
 
 ---
 
@@ -416,6 +428,41 @@ Considered as an alternative to income-based graduation. Rejected because time-b
 **ActivityPub as protocol-level federation — rejected**
 Considered as a discoverability and social graph layer. Rejected for three reasons: the actual usage pattern of subscription platforms in the furry community does not require fediverse discoverability — creators post on public platforms and link to their subscription page, DEN is a destination not a discovery platform; ActivityPub's foundational assumptions (content readable by federated instances, identity coupled to instance address) directly conflict with DEN's foundational assumptions (encrypted content, wallet-based instance-independent identity); integrating ActivityPub would require custom activity types for payment-gated content that no existing ActivityPub client understands, producing a maintenance burden with no commensurate benefit. Optional fediverse broadcast features remain available to client implementations and instance operators who want them — this is not a protocol concern.
 
+**Per-content key bundle delivery — rejected**
+Considered as the model for delivering decryption access to subscribers: each piece of content encrypted with a unique key, keys bundled and delivered to subscribers encrypted to their wallet public key, bundles stored on instance and updated at subscription renewal.
+Rejected for three compounding reasons.
+First, unbounded bundle growth. A creator active for five years with five subscription tiers and monthly key rotation accumulates 5 × 12 × 5 = 300 keys per subscriber at minimum, growing indefinitely. At 1,000 subscribers, routine maintenance requires generating and storing 300,000 encrypted key payloads. This is not a theoretical scale problem — it is a guaranteed operational cost that grows with creator longevity regardless of whether the creator's subscriber count grows. The protocol's foundational principle is honest infrastructure costs; a mechanism that guarantees ever-increasing storage and compute overhead for no additional subscriber benefit is inconsistent with that principle.
+Second, bundle storage creates a data target. Instances storing bundles of encrypted key material — even ciphertext — hold something more valuable than content: the keys to content. An instance under legal or extra-legal pressure to hand over decryption access becomes a higher-value target when it holds bundles that, if the encryption were broken, would unlock everything. The on-demand derivation model means the instance never holds a store of key material at rest — it derives keys transiently at access time. There is nothing to seize.
+Third, superset tier access becomes a storage and management problem. If tier 2 is a superset of tier 1, the bundle model requires either encrypting content twice (once per tier) or including all lower-tier keys in higher-tier bundles, compounding the growth problem. On-demand derivation handles superset access cleanly through the key derivation logic without any additional storage.
+Replaced by on-demand key derivation from master secret at access time. Subscription state is the sole authority. No bundles stored. No rotation schedule. Infrastructure cost is proportional to active access requests, not to content volume or subscriber history.
+
+**Monthly key rotation — rejected**
+Considered as a mechanism to protect against former subscribers retaining access to content from after their subscription lapsed. If keys rotate monthly, a former subscriber's keys from their active period become useless for new content automatically.
+Rejected because the problem it solves is not a real problem given the correct access model, and the cost it introduces is real.
+The access model adopted is: lapse means immediate loss of access. A former subscriber cannot access any content — not historical content, not new content — after their subscription lapses, because subscription state is the access authority. The concern that motivated monthly rotation ("former subscribers could retain access to new content") simply does not arise when access is governed by current subscription state rather than key possession.
+Monthly rotation would protect against a scenario where a subscriber locally cached their keys and continued accessing content after lapsing. In the on-demand derivation model, there is nothing to locally cache — the key is derived transiently per request and verified against current on-chain subscription state at derivation time. A former subscriber with no active subscription state gets no key derived. There is no possession of keys to protect against.
+The cost of rotation is real: new key generation per tier per month, re-delivery to all active subscribers, update of all content encrypted under old keys. At meaningful subscriber counts this is a routine but non-trivial infrastructure operation every 30 days, indefinitely, solving a problem that does not exist in the chosen architecture.
+Former subscriber access to content from their paid period being retained is standard subscription platform behavior. Every major platform — Netflix, Patreon, OnlyFans — operates on the same implicit contract: you paid for that month, your local copy of anything you downloaded is yours, access to new content ends when payment ends. Attempting to revoke access to already-delivered content is both technically impossible in practice (you cannot unsee something) and contrary to reasonable user expectation. Stating this plainly in the spec is more honest than building rotation infrastructure that cannot accomplish the goal it appears to serve.
+
+**Protocol-level wallet recovery infrastructure — rejected**
+Considered as a usability accommodation for participants who lose wallet access. Possible forms included: designated recovery wallet requiring dual-signed transaction; social recovery requiring M-of-N signatures from trusted wallets; custodial recovery where the protocol or a trusted third party holds an encrypted recovery key.
+Rejected because any recovery mechanism the protocol holds creates a target that is equivalent to the identity it purports to protect.
+The identity model of this protocol ties creator identity, subscriber relationships, content references, and master secret access to a wallet address. Wallet authentication is the mechanism by which the protocol verifies that a participant is who they claim to be. Any recovery infrastructure — regardless of form — is a pathway by which someone who does not hold the private key can be granted the access rights of someone who does. That pathway is the attack surface.
+An entity that can compel the protocol to activate recovery infrastructure can impersonate any creator or subscriber. "Compel" includes legal process, social engineering, operational security failures at the recovery infrastructure provider, and any other mechanism by which access to the recovery pathway is obtained. The broader the recovery infrastructure, the broader the attack surface.
+The comparison to non-recovery is instructive. A protocol with no recovery infrastructure cannot be compelled to hand over wallet access — there is nothing to hand over. A protocol with recovery infrastructure can always be compelled to hand it over by a sufficiently motivated adversary with the right leverage. For a protocol whose primary design goal is resistance to exactly this kind of compelled disclosure, building recovery infrastructure is a direct contradiction.
+Wallet private key custody being the participant's responsibility is not a gap in the protocol — it is the designed position. The same is true for every self-custodial wallet, hardware wallet, and comparable system. The friction of owning your wallet is load-bearing: it is what makes the identity genuinely portable and genuinely uncapturable. That friction cannot be removed without also removing the guarantee.
+Client implementations may provide password-based convenience layers over locally-stored wallet key material. This is not protocol-level recovery — it is the client encrypting your keys on your device under your password. If you lose both the client password and the seed phrase, you lose the wallet. This is the same contract as any self-custodial wallet and should be communicated clearly at onboarding.
+
+**On-chain CSAM adjudication process — rejected**
+Considered as an internal protocol-level review panel for CSAM reports. Rejected for three compounding reasons. First, any internal review process requires someone to view reported content to make a determination, creating legal exposure for reviewers in every jurisdiction where possession is criminal regardless of intent. Second, building internal review infrastructure creates a mandate surface — infrastructure that exists can be legislatively expanded and repurposed; routing to NCMEC/IWF/INHOPE means the protocol has no infrastructure to mandate, only a referral pathway to organizations already legally constituted for this purpose. Third, internal adjudication produces liability without protection — an incorrect determination in either direction creates liability for the protocol and its maintainers that does not exist when determination is made by legally authorized authorities. Replaced by mandatory referral to existing legal infrastructure with time-bounded suspension to prevent indefinite suspension as a harassment strategy.
+
+**Creator master secret held on creator device only — rejected**
+Considered as the maximum-privacy model for master secret storage: the master secret never leaves the creator's device, key derivation for all subscriber access requests requires the creator's client to be online and participating, and the instance holds no sensitive creator key material whatsoever.
+Rejected because it introduces a liveness dependency that is incompatible with how creators actually use subscription platforms, and because it transfers infrastructure burden to creators in a way that contradicts the protocol's economic principles.
+The liveness dependency is: if the creator's device is offline, no subscriber can access any content. Every access request requires the creator's client to be running, connected, and responsive. For a creator who posts content and then goes offline — which is the normal operating pattern for any creator who treats this as a source of income rather than a full-time infrastructure management job — subscribers would be unable to access content during any period the creator is not actively online. This is a fundamental UX failure that would make DEN materially worse than any existing subscription platform for subscriber experience.
+The alternative of requiring creators to run always-on infrastructure to keep their master secret available is simply cost and operational burden transferred from instances to creators. Instances are operated by Hosters who are compensated for providing exactly this kind of always-on reliability. A creator who must also maintain always-on infrastructure to make their content accessible is being asked to be their own Hoster without the compensation model that makes Hosting economically rational. This contradicts the principle that the protocol serves human creative labor — it imposes infrastructure obligations on the people the infrastructure is supposed to serve.
+The adopted model stores the master secret on the instance encrypted to the creator's wallet public key. The instance holds ciphertext it cannot read. The Hoster rule holds — an instance operator who cannot read the encrypted master secret blob is in the same position as an instance operator who cannot read encrypted content. The creator's key material is protected by the same architectural guarantee as their content. The instance can serve subscriber access requests autonomously because it can derive keys from the encrypted master secret using a valid subscriber wallet signature as the decryption trigger — without the creator being present, and without the instance ever having access to the plaintext master secret.
+
 ---
 
 ## Appendix B — Open Questions Summary
@@ -424,14 +471,8 @@ A consolidated list of all open questions flagged in the sections above, for tra
 
 | Section | Open Question | Spec Impact | Status |
 |---------|--------------|-------------|--------|
-| 3 | Precise smart contract subscription logic | Implementation decision | Open |
-| 4 | Precise encryption key derivation model | Implementation decision | Open |
-| 7 | Batch settlement transaction fee optimization | Implementation decision | Open |
-| 10 | Governance approval mechanics (minimum participation threshold, voting weight, timeline) | Spec decision — required before Section 10 can be drafted | Open |
-| 12 | CSAM escalation process design | Spec decision — required before Section 12 can be drafted | Open |
-| 13 | Initial governance parameter values | Launch governance decision | Open |
-| 14 | Reference client name, scope, and development timeline | Project decision — outside protocol spec | Open |
-| 15 | Migration tooling scope | Implementation decision | Open |
+
+All questions are currently resolved.
 
 ---
 
