@@ -1,7 +1,7 @@
 # DEN — Decentralized Encrypted Network
 ## Architecture Document v0.1
 
-This document describes the design rationale, structural decisions, and section scope of the DEN protocol specification. It is a companion to the protocol specification itself (`DEN-SPEC.md`), which contains binding implementation requirements. Where the spec says what implementations must do, this document explains why those decisions were made, what alternatives were considered, and what pressure points each decision is designed to close.
+This document describes the design rationale, structural decisions, and section scope of the DEN protocol specification. It is a companion to the protocol specification itself ([den-spec.md](./den-spec.md)), which contains binding implementation requirements. Where the spec says what implementations must do, this document explains why those decisions were made, what alternatives were considered, and what pressure points each decision is designed to close.
 
 The protocol is designed to be client-agnostic — any compliant client can connect to any compliant instance. A companion reference client (working title furDEN) is planned as a separate open-source project under AGPL. Client-layer concerns — user interfaces, terms of use, privacy policies, jurisdiction-specific compliance — are that project's responsibility, not the protocol's.
 
