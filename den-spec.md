@@ -3,7 +3,7 @@
 
 This document contains binding implementation requirements for the DEN protocol. Implementations claiming DEN compliance MUST satisfy all MUST requirements in this specification. SHOULD requirements are strong recommendations whose deviation requires documented justification. MAY requirements are explicitly optional.
 
-This document is a companion to [`den-architecture.md`](./den-archtecture.md), which records design rationale and rejected alternatives. Where this document says what implementations must do, the architecture document explains why.
+This document is a companion to [`den-architecture.md`](./den-architecture.md), which records design rationale and rejected alternatives. Where this document says what implementations must do, the architecture document explains why.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
