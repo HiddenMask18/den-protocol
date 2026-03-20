@@ -1,7 +1,7 @@
 # DEN — Decentralized Encrypted Network
 ## Architecture Document v0.1
 
-This document describes the design rationale, structural decisions, and section scope of the DEN protocol specification. It is a companion to the protocol specification itself ([den-spec.md](./den-spec.md)), which contains binding implementation requirements. Where the spec says what implementations must do, this document explains why those decisions were made, what alternatives were considered, and what pressure points each decision is designed to close.
+This document describes the design rationale, structural decisions, and section scope of the DEN protocol specification. It is a companion to the protocol specification itself [`DEN-SPEC.md`](./den-spec.md), which contains binding implementation requirements. Where the spec says what implementations must do, this document explains why those decisions were made, what alternatives were considered, and what pressure points each decision is designed to close.
 
 The protocol is designed to be client-agnostic — any compliant client can connect to any compliant instance. A companion reference client (working title furDEN) is planned as a separate open-source project under AGPL. Client-layer concerns — user interfaces, terms of use, privacy policies, jurisdiction-specific compliance — are that project's responsibility, not the protocol's.
 
@@ -145,9 +145,9 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Design rationale — instance failure distinction:** Deliberate operator-initiated removal is a governed process with defined timelines (see Section 7). Instance failure is an infrastructure event handled by the portability guarantee and IPFS redundancy. The spec must distinguish these so the governed process cannot be bypassed by claiming infrastructure failure.
 
-**Precise encryption key derivation model:** on-demand derivation from master secret; master secret stored on instance encrypted to creator wallet public key; no stored content keys; no key bundles; no rotation schedule.
+**Precise encryption key derivation model:** Each tier and each shop item has an independent derivation path, namespaced by type: `derive(master_secret, "tier:" + tier_id)` for subscription content, `derive(master_secret, "item:" + item_id)` for shop item content. The relationship between tiers — whether a higher tier also grants access to lower tier content — is a creator-authored access grant declaration stored on the instance as part of the portable data set, not hardcoded into derivation logic. Parallel non-superset tiers are fully supported: two tiers with no declared grant between them are independent derivation paths with independent access predicates. Shop items and packs follow the same derivation architecture. No stored content keys; no key bundles; no rotation schedule.
 
-**Open questions:** Flagged for future: Parallel non-superset tiers are a common creator use case. The v0.1 hierarchical constraint covers the standard subscription model but excludes creators who want distinct content tracks at the same tier level. This is a governance extension candidate, not a protocol floor concern.
+**Open questions:** None. This section is fully resolved.
 
 ---
 
@@ -427,6 +427,15 @@ Considered as an alternative to income-based graduation. Rejected because time-b
 
 **ActivityPub as protocol-level federation — rejected**
 Considered as a discoverability and social graph layer. Rejected for three reasons: the actual usage pattern of subscription platforms in the furry community does not require fediverse discoverability — creators post on public platforms and link to their subscription page, DEN is a destination not a discovery platform; ActivityPub's foundational assumptions (content readable by federated instances, identity coupled to instance address) directly conflict with DEN's foundational assumptions (encrypted content, wallet-based instance-independent identity); integrating ActivityPub would require custom activity types for payment-gated content that no existing ActivityPub client understands, producing a maintenance burden with no commensurate benefit. Optional fediverse broadcast features remain available to client implementations and instance operators who want them — this is not a protocol concern.
+
+**Superset-only tier hierarchy — redesigned before adoption**
+The initial draft of Section 4 defined Creator tiers as a strict hierarchy where each tier is a superset of all tiers below it, with parallel non-superset tiers flagged as a future extension. This was resolved before the spec was finalized rather than deferred. The superset relationship is now a creator-authored access grant declaration stored on the instance, not hardcoded into derivation logic. Each tier has an independent derivation path. Parallel tiers — distinct tiers at the same level with no declared grant between them — fall out naturally without requiring a separate mechanism. Deferring this would have required a breaking change to smart contracts, key derivation logic, and client implementations simultaneously. Resolving it early is preferable to resolving it under compatibility constraints.
+
+**Shop items and packs as first-class protocol objects**
+Shop items (individual content pieces available for one-time purchase) and packs (content objects whose payload declares a set of item access grants) are supported at the protocol layer using the same derivation architecture as subscription tiers. Purchase state is on-chain and permanent. Pack membership reflects current pack state — no historical snapshot is stored. The derivation model handles all three access types (subscription tier, shop item, pack) through the same namespaced derivation path mechanism. See pack history snapshot rejection below.
+
+**Pack purchase history snapshot — rejected**
+Considered as a mechanism to protect buyers against pack modification by recording pack state at purchase time — either on-chain (writing all item IDs into the purchase transaction) or as instance-side historical state. Rejected on two grounds. Full on-chain snapshots scale poorly: pack purchase transaction cost grows linearly with pack size multiplied by purchase volume, producing unbounded chain cost borne by buyers. Instance-side historical state introduces an undetectable corruption failure mode: a malicious or migrating instance can silently provide corrupted historical state with no way for the buyer to detect or prove what they were originally entitled to. Replaced by treating packs as content objects with current-state access semantics, consistent with how content deletion affects Subscribers generally. Pack modification notification is a client-layer obligation. The no-refund model and verification-before-settlement principle are the buyer protections available within the trustless architecture.
 
 **Per-content key bundle delivery — rejected**
 Considered as the model for delivering decryption access to subscribers: each piece of content encrypted with a unique key, keys bundled and delivered to subscribers encrypted to their wallet public key, bundles stored on instance and updated at subscription renewal.

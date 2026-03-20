@@ -3,7 +3,7 @@
 
 This document contains binding implementation requirements for the DEN protocol. Implementations claiming DEN compliance MUST satisfy all MUST requirements in this specification. SHOULD requirements are strong recommendations whose deviation requires documented justification. MAY requirements are explicitly optional.
 
-This document is a companion to [den-architecture.md](./den-architecture.md), which records design rationale and rejected alternatives. Where this document says what implementations must do, the architecture document explains why.
+This document is a companion to [`den-architecture.md`](./den-archtecture.md), which records design rationale and rejected alternatives. Where this document says what implementations must do, the architecture document explains why.
 
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
@@ -32,6 +32,14 @@ These terms are used throughout this specification without re-definition. Where 
 **Protocol floor violation** — any content that violates the prohibitions defined in Section 11. Detection, reporting, and removal of protocol floor violations is governed by Section 12.
 
 **Migration** — the process by which a Creator moves their identity, content references, subscriber relationships, and master secret from one instance to another. Governed by Section 8 and Section 15.
+
+**Purchase state** — the on-chain record of whether a specific wallet address has completed a one-time purchase of a specific shop item or pack. Purchase state is permanent and does not expire. It is publicly visible on-chain by design.
+
+**Shop item** — an individual piece of content available for one-time purchase independent of subscription state. Access is perpetual after purchase, governed by purchase state.
+
+**Pack** — a content object whose payload is an access grant declaration listing which shop item derivation paths the purchase unlocks. A pack is purchasable as a single transaction. Pack membership reflects current pack state — purchase grants access to items the pack currently declares, not a historical snapshot.
+
+**Access grant declaration** — a creator-authored record stored on the instance as part of the portable data set, declaring which derivation paths a subscription tier or pack purchase unlocks. Access grant declarations are required for key derivation at any instance and MUST be included in the portable data set.
 
 ---
 
@@ -211,6 +219,18 @@ Fiat processors MAY operate as onramp and offramp services at the edges of the e
 - A fiat processor's exit MUST NOT affect subscriptions on primary crypto rails
 - No fiat processor holds a kill switch over protocol operation
 
+### 3.7 Shop Item and Pack Purchase Flow
+
+Shop item and pack purchases MUST be implemented as direct on-chain transfers triggering purchase state on the smart contract, following the same direct transfer model as subscription payments (Section 3.4).
+
+Purchase state is permanent and does not expire. A wallet address that holds purchase state for a shop item or pack retains that state indefinitely and across Creator migration.
+
+**No refunds.** Cryptocurrency transactions are final by design. The protocol does not support refunds for shop item or pack purchases. The verification-before-settlement principle (Section 5.5) applies: if key delivery would fail due to a protocol-layer technical error, the purchase transaction MUST NOT complete. If the transaction completes, it is final.
+
+Auto-renewal does not apply to shop item or pack purchases. Auto-renewal is a subscription mechanism only.
+
+Shop item and pack purchases count toward Creator trust tier graduation under the same rules as subscription transactions (Section 9.2).
+
 ---
 
 ## Section 4 — Content and Storage Layer
@@ -223,9 +243,20 @@ All content MUST be encrypted before storage on any instance. Instances MUST sto
 
 **Content key derivation:** Content keys are derived on demand from the master secret at access time. Content keys are NOT stored independently on the instance. Key derivation requires the master secret to be decrypted by the Creator's client, or delegated to an instance-side derivation service operating on the encrypted master secret unlocked by a valid wallet signature.
 
-**Content encryption:** Each piece of content is encrypted with a content key derived from the Creator's master secret and the content's tier assignment. Content at tier N is accessible to Subscribers holding an active subscription to tier N or any higher tier that is a superset of tier N. Superset access is governed by key delivery, not by duplicate content storage — content is encrypted once per tier, not once per Subscriber.
+Each tier and each shop item has an independent derivation path. Keys are derived as:
 
-In this version of the protocol, Creator tiers MUST be defined as a strict hierarchy — each tier is a superset of all tiers below it. Parallel non-superset tiers (distinct tiers at the same level with non-overlapping content) are not supported in v0.1 and are flagged as a future protocol extension.
+- Subscription content: `derive(master_secret, "tier:" + tier_id)`
+- Shop item content: `derive(master_secret, "item:" + item_id)`
+
+The type namespace prefix prevents collisions between derivation paths. Content keys are NOT stored independently on the instance.
+
+**Access grant declarations:** The relationship between tiers — whether a higher tier also grants access to lower tier content — is a creator-authored access grant declaration stored on the instance as part of the portable data set. It is NOT hardcoded into the derivation logic. The access predicate for a given subscriber wallet evaluates: does this wallet's on-chain state, combined with the creator's access grant declarations, authorize derivation of the requested path?
+
+This model supports both hierarchical tiers (where higher tiers declare grants to lower tiers) and parallel tiers (distinct tiers at the same level with no declared grant between them). Parallel tiers are fully supported.
+
+**Content encryption:** Each piece of content is encrypted with a content key derived from the Creator's master secret and the content's tier or item assignment. Content is encrypted once per tier or item — not once per Subscriber. Superset access is governed by access grant declarations, not by duplicate content storage.
+
+**Shop item and pack derivation:** Shop item content is encrypted under a derivation path keyed by item ID. Pack purchases are on-chain purchase state records referencing a pack ID. The pack, as a content object, declares which item derivation paths the purchase unlocks via its access grant declaration. Pack state is current, not historical: access reflects what the pack currently declares.
 
 ### 4.2 Instance Storage Requirements
 
@@ -279,6 +310,18 @@ A Creator MAY rotate their master secret at any time. Key rotation is a supporte
 
 Re-encryption cost is proportional to total content volume and is borne by the Creator. The protocol does not subsidize re-encryption. Key rotation is the correct response to a compromised master secret. Re-encryption protects forward access; content already accessed by a party holding the old key cannot be retroactively protected. Re-encryption and the associated on-chain content reference updates are initiated by the Creator. Transaction fees are borne by the Creator.
 
+### 4.8 Shop Item and Pack Storage
+
+**Shop items** are content objects following the standard content lifecycle (Section 4.5). They are encrypted under a derivation path keyed by item ID (Section 4.1). Storage allocation for shop items is governed by the Creator's trust tier in the same manner as subscription content.
+
+**Packs** are content objects whose payload is an access grant declaration — a machine-readable record of which item IDs the pack purchase unlocks. Packs are created, stored, and addressed by content fingerprint following the same process as any content object.
+
+Pack membership reflects current pack state. A Creator MAY add or remove items from a pack by updating the pack content object, producing a new content fingerprint. Buyers whose purchase state references the pack ID access whatever the pack currently declares. Pack modification SHOULD trigger notification to existing buyers — this is a client-layer notification obligation, not a protocol enforcement requirement.
+
+Pack deletion follows the standard content lifecycle (Section 4.5). If a pack is deleted, existing buyers retain purchase state on-chain but the access grant declaration no longer exists to resolve. This is consistent with how content deletion affects Subscribers generally. Creators SHOULD NOT delete packs with active buyers without providing reasonable notice.
+
+Instance storage requirements (Section 4.2) apply to shop items and packs identically to subscription content. Current pack state MUST be included in the Creator's portable data set (Section 8.1).
+
 ---
 
 ## Section 5 — Access Control Layer
@@ -312,6 +355,25 @@ Payment finalization MUST be preceded by a verification step confirming that key
 ### 5.6 Subscriber Protection During Sunset
 
 When a sunset notice is issued (Section 7), Subscribers active at the time of notice retain read-only access to content through the natural expiry of their paid period. No new subscriptions MUST be accepted after a sunset notice is issued. A Subscriber whose paid period expires during the sunset window loses access at natural expiry — their access is not extended by the sunset process.
+
+### 5.7 Purchase-Based Access (Shop items)
+
+Purchase-based access follows the same verification structure as subscription-based access with the following differences:
+
+**Access flow:**
+
+1. Buyer authenticates via wallet signing (Section 2.2)
+2. Instance verifies purchase state on-chain for the requested item or pack ID
+3. For pack purchases: instance resolves the pack's current access grant declaration to determine which item derivation paths the purchase unlocks
+4. Instance derives the content key for the requested item path
+5. Buyer's client decrypts content locally
+6. If no purchase state exists: instance returns access denial; no key is derived or transmitted
+
+**No expiry.** Purchase state does not expire. Access revocation on lapse does not apply to purchase-based access. A wallet with valid purchase state retains access as long as the content exists on the instance.
+
+**Pack resolution.** For pack purchases, the instance resolves the pack's current access grant declaration at access time. Access reflects current pack state.
+
+**Purchase state survives migration.** Purchase state is on-chain and survives Creator migration identically to subscription state. A receiving instance MUST accept on-chain purchase state from migrating Creators and serve access accordingly. The receiving instance MUST have the current pack access grant declarations from the Creator's portable data set to resolve pack purchases correctly.
 
 ---
 
@@ -430,7 +492,9 @@ The following data belongs to the Creator at all times and MUST be held by the C
 
 - Cryptographic wallet keys (private key or hardware wallet custody)
 - Subscriber list: wallet addresses and current subscription states
-- Content references: fingerprints (hashes) and metadata for all uploaded content
+- Buyer list: wallet addresses and purchase state records (item IDs and pack IDs purchased)
+- Content references: fingerprints (hashes) and metadata for all uploaded content, including shop items and packs
+- Access grant declarations: the creator's declared tier access grants and current pack access grant declarations
 - Pseudonymous Creator identity record
 - Encrypted master secret blob (encrypted to Creator's wallet, readable only by Creator)
 
@@ -473,7 +537,7 @@ Tier thresholds, storage limits, rate limits, and file size limits are governanc
 
 ### 9.2 Tier Graduation Basis
 
-Tier graduation is based on verified inbound transactions from distinct external wallet addresses over a defined lookback window. Graduation is automatic, passive, and requires no moderator approval, application process, or human decision.
+Tier graduation is based on verified inbound transactions from distinct external wallet addresses over a defined lookback window. Qualifying transactions include subscription payments and shop item or pack purchases. Graduation is automatic, passive, and requires no moderator approval, application process, or human decision.
 
 The lookback window duration is a governance parameter defined in Section 13.
 
@@ -789,6 +853,9 @@ Rejected because time-based graduation is gameable by waiting without ecosystem 
 **ActivityPub as protocol-level federation — rejected**
 Rejected: furry community subscription platform usage does not require fediverse discoverability — DEN is a destination, not a discovery platform; ActivityPub's foundational assumptions (content readable by federated instances, identity coupled to instance address) directly conflict with DEN's foundational assumptions; custom activity types for payment-gated content would add maintenance burden with no benefit. Optional fediverse broadcast remains available to client implementations (Section 6.1).
 
+**Pack purchase history snapshot — rejected**
+Considered as a mechanism to protect buyers against pack modification: record the full pack state at purchase time either on-chain (writing all item IDs into the purchase transaction) or as instance-side historical state. Rejected on two grounds. Full on-chain snapshots scale poorly — pack purchase transaction cost grows linearly with pack size multiplied by purchase volume, producing unbounded chain cost borne by buyers. Instance-side historical state introduces an undetectable corruption failure mode: a malicious or migrating instance can silently provide corrupted historical state with no way for the buyer to verify what they were originally entitled to. Replaced by treating packs as content objects with current-state access semantics, consistent with how content deletion affects Subscribers generally. Pack modification notification is a client-layer obligation. The no-refund model and verification-before-settlement principle (Section 5.5, Section 3.7) are the buyer protections available within the trustless architecture.
+
 **Per-content key bundle delivery — rejected**
 Considered as the primary key model. Rejected: key bundle size scales with content volume and subscription history, producing unbounded growth (5 years × 5 tiers × 12 months = 300+ keys per subscriber); bundle maintenance at scale is expensive infrastructure; bundle storage creates a data target on instances. Replaced by on-demand key derivation from master secret at access time, with subscription state as the sole access authority (Section 4, Section 5).
 
@@ -810,7 +877,7 @@ A consolidated list of all open questions flagged in the sections above, for tra
 
 | Section | Open Question | Spec Impact | Status |
 |---------|--------------|-------------|--------|
-| 2.5 | Active smart contract Subscription state referencing potential old wallet indentity | Implementation decision| Open |
+| 2.5 | Active smart contract subscription state and purchase state referencing potential old wallet identity — both require migration when a Creator or Subscriber rotates their wallet address; a stable on-chain identity indirection layer is needed so rotation updates one record rather than requiring all active subscriber contracts and purchase records to be migrated | Implementation decision | Open |
 | 14 | Reference client name, scope, and development timeline | Project decision — outside protocol spec | Open |
 
 ---
