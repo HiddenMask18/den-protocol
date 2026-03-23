@@ -8,11 +8,16 @@ crypto-native payments, no platform intermediary.
 
 - [MANIFESTO.md](./MANIFESTO.md) — why this exists and what it stands for
 - [den-architecture.md](./den-architecture.md) — architecture decisions and design rationale
+- [den-spec.md](./den-spec.md) — protocol specification v0.1-draft
 
 ## Status
 
-Protocol specification in active development. The architecture is defined. 
-The spec is being written.
+Protocol specification v0.1-draft committed. Architecture defined.
+Active development ongoing.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
