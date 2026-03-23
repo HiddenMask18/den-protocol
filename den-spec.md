@@ -15,7 +15,7 @@ These terms are used throughout this specification without re-definition. Where 
 
 **Instance** — a running deployment of the DEN protocol operated by a Hoster. An instance provides storage, compute, and bandwidth for Creators and Subscribers. Multiple instances form the network. No single instance is authoritative over any other.
 
-**Protocol floor** — the minimum content policy that every compliant instance MUST enforce. Defined exhaustively in Section 11. Instance-level standards may exceed the floor but MUST NOT go below it.
+**Protocol floor** — the structural prohibitions that every compliant instance MUST enforce, defined in Section 11. The floor consists of prohibitions grounded in legal liability for real people. Instance-level standards may exceed the floor but MUST NOT claim to enforce the floor against content that does not meet the specific prohibitions stated in Section 11.2.
 
 **Governance parameter** — a protocol value that MAY be adjusted through the community governance process defined in Section 10 without requiring a full specification amendment. All governance parameters are listed exhaustively in Section 13.
 
@@ -97,7 +97,7 @@ A Creator's identity, subscriber relationships, content references, and master s
 
 Every policy position has a clear answer with documented reasoning.
 
-*Implementation implication:* The protocol floor defined in Section 11 is exhaustive. Categories not addressed by name are governed by the general clause in Section 11. Ambiguous cases are resolved by governance amendment that sets binding precedent — not by ad hoc instance operator judgment.
+*Implementation implication:* The protocol floor defined in Section 11 states structural prohibitions with explicit legal grounding. Everything not prohibited at the protocol floor is unrestricted at the protocol level. Content policy beyond the floor is instance-level community standards. Ambiguous cases at the protocol floor are resolved by governance amendment that sets binding precedent — not by ad hoc instance operator judgment.
 
 ---
 
@@ -627,43 +627,31 @@ The founding maintainer is sustained by voluntary community contribution, transp
 
 ### 11.1 Design Principle
 
-Vagueness is an attack surface. The protocol floor is stated exhaustively with explicit reasoning for every position. Every category has a clear answer. Ambiguity is leverage for organizations that use pressure campaigns to restrict content without winning legal arguments. Exhaustive clarity removes that leverage.
+The protocol floor consists exclusively of structural prohibitions grounded in legal liability and protocol integrity. Content policy beyond this floor is instance-level community standards. The protocol does not enumerate allowed content — everything not explicitly prohibited at the protocol floor is unrestricted at the protocol level.
 
 ### 11.2 Protocol Floor — Prohibited Content
 
-The following content categories are prohibited at the protocol floor. No instance MAY host this content regardless of above-floor standards:
+The following prohibitions apply to all compliant instances. No instance MAY host this content:
 
-**Sexual content depicting minors.** Absolute prohibition. No jurisdiction carveout. No exceptions. This will not change through governance. The reasoning is not ambiguous and will not be re-litigated. For enforcement approach, see Section 11.4 and Section 12.
+**Sexual content depicting real, identifiable minors.** Content depicting a real, identifiable person under the age of 18 in a sexual context is prohibited. This prohibition activates the mandatory reporting requirement defined in Section 12.5. It does not extend to fictional characters — fictional content policy is instance-level community standards.
 
-**Photographic content of real human beings.** Out of scope for this protocol. This is a different legal and technical problem from the illustrated and written content this protocol is designed for. It is not a moral judgment on photographic content communities. Instances focused on photographic content should use infrastructure designed for that purpose.
+**Content depicting real, identifiable persons in a sexual or defamatory context without documented consent.** This prohibition addresses defamation and privacy liability. It does not apply to fictional characters who resemble real people incidentally.
 
-**Content generated primarily by artificial intelligence prompt.** This protocol exists to sustain human creative labor. Content where AI generation is the primary authorship — not a tool assisting human creativity, but the primary generator — is prohibited. The distinction between AI-assisted human creativity and AI-primary generation requires creative judgment and is enforced by instance operator determination (Section 12). No reliable automated technical test exists for this distinction; the spec acknowledges this honestly rather than specifying an unimplementable requirement.
+### 11.3 Scanning Infrastructure
 
-**Real person content without consent.** Content depicting a real, identifiable person in a sexual or defamatory context without their documented consent is prohibited. This category addresses defamation and privacy exposure, not fictional characters who resemble real people incidentally.
-
-### 11.3 Protocol Floor — Allowed Content
-
-The following content categories are explicitly allowed at the protocol floor. Instances MUST NOT go below the floor by prohibiting these categories entirely, though above-floor standards MAY restrict or require content warnings:
-
-**Illustrated, 3D rendered, and written adult content between adult characters.** Core to the community this protocol serves.
-
-**Feral content.** Fictional animals are not real animals. This category is allowed without reservation.
-
-**Vore, gore, and taboo kink content.** Fiction is not endorsement. Content warnings are required for all content in this category.
-
-**Anthro and human characters.** Core to what the community this protocol serves creates.
-
-**Any content type not explicitly prohibited** in Section 11.2, with appropriate content warnings where the content type warrants them.
-
-### 11.4 On the CSAM Prohibition and Scanning Infrastructure
-
-The prohibition on sexual content depicting minors is enforced through accountability, not surveillance. DEN MUST NOT build scanning infrastructure — no hash-matching database, no client-side scanning, no PhotoDNA integration. The reasons are architectural and intentional:
+DEN MUST NOT build scanning infrastructure — no hash-matching database, no client-side scanning, no PhotoDNA integration. The reasons are architectural and intentional:
 
 The E2EE architecture means the protocol has no plaintext access layer. There is no content to scan. Introducing scanning infrastructure would require breaking the encryption architecture, which is a fixed spec value not subject to governance amendment.
 
 Scanning infrastructure, once introduced, can be mandated, expanded by legislative pressure, and updated to cover content categories beyond its original stated purpose. It never stays limited. The absence of scanning infrastructure is the architectural defense against this pattern — it cannot be mandated because it does not exist.
 
 Legal liability for uploaded content sits with Creators. Subscribers — the only participants with plaintext access — are the detection layer. The reporting process is defined in Section 12.
+
+### 11.4 Instance-Level Content Standards
+
+Instance operators MAY set content standards above the protocol floor. Above-floor standards MUST be published publicly before the instance accepts Creators and MUST be applied uniformly to all Creators on the instance. Selective application is an abuse of operator position and constitutes a protocol violation.
+
+The protocol floor is a ceiling on restriction — instances MUST NOT prohibit content on the grounds that it violates the protocol floor unless it meets the specific prohibitions stated in Section 11.2.
 
 ---
 
@@ -701,7 +689,7 @@ On suspension, the Creator MUST receive immediately:
 
 ### 12.5 Tiered Determination
 
-**AI content and real-person content violations:**
+**Protocol floor violations (real person content without consent):**
 
 1. Creator response window (duration: governance parameter, Section 13)
 2. Instance operator determination after response window
@@ -709,15 +697,19 @@ On suspension, the Creator MUST receive immediately:
 4. Deletion only after appeal is exhausted or waived
 5. Sunset window subscriber protection applies during appeal
 
-**CSAM violations:**
+**Sexual content depicting real, identifiable minors:**
 
 1. Immediate access suspension
 2. Automatic mandatory referral to legal reporting infrastructure: [NCMEC CyberTipline](https://www.missingkids.org/gethelpnow/cybertipline) (US), [IWF](https://www.iwf.org.uk/) (UK), [INHOPE](https://inhope.org/) network (international)
 3. Creator notified of suspension and referral
-4. Protocol does not conduct independent adjudication of CSAM reports — this is a legal matter handled by the appropriate authorities
+4. Protocol does not conduct independent adjudication — this is a legal matter handled by the appropriate authorities
 5. Suspension is time-bounded — automatic reinstatement after the csam_suspension_duration governance parameter period unless law enforcement has issued a preservation order or opened an active investigation, in which case suspension continues until that process concludes. Suspension lifted and outcome recorded on-chain if claim found unsubstantiated. If no law enforcement action is taken within the suspension period, reinstatement is automatic.
 
-The protocol deliberately does not build its own CSAM review infrastructure. No internal panel, no distributed jury, no protocol-level adjudication. The legal referral infrastructure exists for this purpose. The protocol routes to it.
+The protocol deliberately does not build its own review infrastructure for this category. No internal panel, no distributed jury, no protocol-level adjudication. The legal referral infrastructure exists for this purpose. The protocol routes to it.
+
+**Above-floor violations (instance-level content standards):**
+
+Instance-level content standard violations are governed entirely by the instance operator. The process MUST follow Section 7.5 removal procedures. Creator appeal to governance is available only where the Creator claims the instance applied above-floor standards in violation of Section 11.4 — selectively, without publication, or below the protocol floor.
 
 ### 12.6 False Report Consequences
 
@@ -794,6 +786,8 @@ The following are explicitly not protocol concerns:
 
 **Fiat-to-crypto onramp services.** Client concern. The protocol SHOULD NOT make the path unnecessarily opaque but MUST NOT mandate specific onramp providers.
 
+**Photographic content of real human beings.** This protocol is designed for illustrated and written content. Photographic content platforms have different legal and technical requirements — rights management, real identity verification, DMCA infrastructure — that this protocol is not designed to address. Communities built around photographic content should use infrastructure designed for that purpose.
+
 ### 14.2 The Reference Client
 
 A companion open-source reference client — working title furDEN — is planned as the standard interface for Creators and Subscribers accessing DEN. It will be released under [AGPL](https://www.gnu.org/licenses/agpl-3.0.en.html). The reference client is a separate project from this protocol specification. Its legal disclosures, privacy policy, and terms of use are its own responsibility and are not specified here.
@@ -845,7 +839,7 @@ Considered as distributed content violation determination. Rejected: legal expos
 Rejected because it directly incentivizes hosting only profitable Creators. Replaced by resource-based compensation decoupled from Creator earnings (Section 7.2).
 
 **Hash-matching and client-side scanning for CSAM — rejected**
-Rejected: introduces scanning infrastructure that can be mandated and expanded; [PhotoDNA](https://www.microsoft.com/en-us/photodna)-style databases require trusting an external authority over database contents; client-side scanning is general surveillance infrastructure regardless of stated first use. Replaced by architectural impossibility as primary defense, subscriber reporting as detection layer, creator liability as enforcement anchor (Section 11.4, Section 12).
+Rejected: introduces scanning infrastructure that can be mandated and expanded; [PhotoDNA](https://www.microsoft.com/en-us/photodna)-style databases require trusting an external authority over database contents; client-side scanning is general surveillance infrastructure regardless of stated first use. Replaced by architectural impossibility as primary defense, subscriber reporting as detection layer, creator liability as enforcement anchor (Section 11.3, Section 12).
 
 **Time-based trust tier graduation — rejected**
 Rejected because time-based graduation is gameable by waiting without ecosystem participation. Replaced by income-based graduation tied to verified external transactions (Section 9.2).
