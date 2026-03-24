@@ -87,7 +87,7 @@ We will be explicit. Vagueness is the attack surface that organizations like Col
 - Any kink or content type not explicitly excluded, with appropriate content warnings
 
 **Not allowed:**
-- Sexual content depicting minors — no jurisdiction carveout, no exceptions
+- Sexual content depicting real, identifiable minors — no jurisdiction carveout, no exceptions
 - Photographic content of real human beings — this is a different legal and technical problem, it is not what DEN is designed for
 - Content generated primarily by AI prompt — DEN exists to sustain human creative labor, not to host algorithmic output displacing the artists this community depends on
 - Real person content without consent — defamation and privacy surface, full stop
@@ -101,7 +101,7 @@ We are not going to soften any of these positions when someone applies pressure.
 
 ## On the CSAM Prohibition and Why We Don't Build Scanning Infrastructure
 
-The prohibition on sexual content depicting minors is absolute. No jurisdiction carveout. No exceptions. This will not change.
+The prohibition on sexual content depicting real, identifiable minors is absolute. No jurisdiction carveout. No exceptions. This will not change.
 
 We want to be precise about how this is enforced, because the answer is not what legislators pushing EARN IT, Chat Control, or the Online Safety Act want to hear.
 
