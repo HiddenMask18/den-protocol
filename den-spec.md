@@ -41,6 +41,14 @@ These terms are used throughout this specification without re-definition. Where 
 
 **Access grant declaration** — a creator-authored record stored on the instance as part of the portable data set, declaring which derivation paths a subscription tier or pack purchase unlocks. Access grant declarations are required for key derivation at any instance and MUST be included in the portable data set.
 
+**Identity contract** — a per-participant proxy smart contract deployed on the canonical identity chain at first registration. The identity contract holds the participant's current active wallet address and any registered emergency wallet addresses. The contract address never changes and is the stable DEN identifier for that participant. Subscriptions, purchase state, and content references address participants by identity contract address, not by wallet address directly. The proxy pattern allows the participant to upgrade contract logic without changing the contract address or requiring migration of downstream references.
+
+**Canonical identity chain** — Base (EVM L2). Identity contracts are deployed on Base. Identity resolution is authoritative on Base. Participants transacting on non-EVM rails (TRON, Solana) still require an EVM wallet for identity contract operations. TRON and Solana are payment rails; they are not identity rails.
+
+**Emergency wallet** — a secondary wallet address registered by a participant against their identity contract as an additional authorized key. The emergency wallet can independently authenticate, decrypt the master secret blob, initiate wallet rotation, cancel pending rotations, and initiate revocation of other registered wallets. Registration is optional but strongly recommended. An emergency wallet SHOULD be kept in cold storage and used only for the operations above.
+
+**Wallet rotation** — the protocol operation by which a participant updates the active wallet address recorded in their identity contract. Rotation does not change the identity contract address. All subscriptions, purchase state, content references, and trust tier history continue to resolve against the same identity contract address after rotation.
+
 ---
 
 ### The Three Denizens
@@ -155,13 +163,81 @@ A single wallet address MAY hold multiple denizen roles simultaneously. A Creato
 
 ### 2.5 Wallet Recovery and Key Custody
 
-Wallet private key custody is the participant's sole responsibility. The protocol MUST NOT store wallet private keys or seed phrases. The protocol MUST NOT provide wallet recovery infrastructure.
+#### 2.5.1 Root of Trust
 
-Wallet rotation is a supported protocol operation. A Creator MAY rotate their primary wallet address via a signed transaction from both the old and new wallet addresses, updating their on-chain identity record. This operation transfers all associated subscription state, content references, and trust tier history to the new address.
+The wallet private key, secured by the seed phrase, is the sole protocol-level credential. Instance authentication, content key derivation, rotation operations, and identity recovery all ultimately require a wallet private key registered against the participant's identity contract. Wallet private key custody is the participant's sole responsibility. The protocol MUST NOT store wallet private keys or seed phrases. The protocol MUST NOT provide wallet recovery infrastructure.
 
-Client implementations MAY provide username and password authentication as a convenience layer over wallet signing. In this pattern, the client stores the wallet key material encrypted by the user's password locally. The protocol never receives the password or the unencrypted key material. If a participant loses both their client password and their wallet seed phrase, their wallet access is unrecoverable. This is the designed behavior. Client implementations SHOULD communicate this clearly during onboarding.
+Client-layer convenience mechanisms — passwords, biometrics, email recovery — operate below this layer. They protect against casual unauthorized access to the client. They do not protect against an adversary who holds the seed phrase. A participant who holds their seed phrase can always recover full protocol access regardless of client state. A participant who loses all registered wallet access loses their protocol identity. This is the designed behavior, consistent with all self-custodial wallet systems.
 
-**Open question:** The mechanism by which active smart contract subscription state referencing the old wallet address is migrated to the new address requires a defined on-chain identity indirection layer. Specifically: subscriptions should reference a stable creator identity record rather than a wallet address directly, so rotation updates one record rather than requiring all active subscriber contracts to be migrated. This is flagged for resolution before the Section 3 smart contract mechanics are finalized.
+#### 2.5.2 Identity Contract
+
+At first registration each participant deploys an identity contract on the canonical identity chain (Base). The identity contract address is the participant's stable DEN identifier. All subscriptions, purchase state, content references, and trust tier history address the participant by identity contract address, not by wallet address directly.
+
+The identity contract holds:
+- The current active wallet address
+- Any registered emergency wallet addresses
+- Pending rotation or revocation announcements and their expiry times
+
+The identity contract MUST be deployed as a participant-controlled proxy. The participant holds the upgrade key. The protocol publishes reference implementation addresses. Participants upgrade their contract logic at will by pointing their proxy to a new implementation. No protocol authority holds upgrade keys over any participant's identity contract.
+
+#### 2.5.3 Emergency Wallet
+
+A participant MAY register one or more emergency wallet addresses against their identity contract. Registration MAY occur at account creation or at any later time while the primary wallet is accessible. An emergency wallet SHOULD be kept in cold storage with no prior transaction history linking it to the participant's daily activity. It SHOULD be treated with the same security discipline as the primary wallet.
+
+An emergency wallet can independently:
+- Authenticate to any instance
+- Decrypt the master secret blob (for Creators — requires multi-key encryption, Section 4.1)
+- Initiate wallet rotation
+- Cancel pending rotation or revocation announcements
+- Initiate revocation of another registered wallet
+
+An emergency wallet SHOULD maintain a small token balance sufficient to cover transaction fees for the operations above. A wallet with zero balance cannot submit transactions regardless of what it authorizes.
+
+Registration of an emergency wallet is optional. Participants who do not register one accept that the compromise or loss scenarios below have no recovery path.
+
+**Subscriber emergency wallets:** Subscribers MAY register emergency wallets under the same mechanism. Subscribers without significant purchase state MAY omit this. Subscribers with material purchase history SHOULD register one — purchase state is permanent and on-chain, and represents accumulated value that cannot be recovered if wallet access is lost.
+
+#### 2.5.4 Wallet Rotation
+
+**Clean rotation — both wallets accessible:**
+Dual-signature rotation requires signatures from both the old and new wallet addresses. The identity contract updates the active wallet immediately on dual-signature verification. No time delay applies.
+
+**Compromise rotation — old wallet inaccessible or untrusted:**
+Any wallet registered against the identity contract MAY announce a unilateral rotation. The announcement is recorded on-chain. A time-delay window begins, duration governed by the `wallet_rotation_delay` governance parameter. During this window, any other wallet registered against the same identity contract MAY cancel the rotation. If the window expires without cancellation, the rotation completes and the new wallet becomes the active wallet.
+
+Cancellation is on-chain and visible. A pattern of announced-then-canceled rotations is a signal that an account is under active attack. Client implementations SHOULD surface this state visibly to the participant.
+
+Completing a compromise rotation via the emergency wallet when the primary wallet is inaccessible is the primary designed use case for the emergency wallet.
+
+#### 2.5.5 Wallet Revocation
+
+Any wallet registered against an identity contract MAY announce revocation of another registered wallet. Revocation follows the same time-delay mechanism as unilateral rotation — `wallet_rotation_delay` duration, cancellable by any registered wallet during the window.
+
+Revocation removes the target wallet from the identity contract's registered key set. It does not rotate the active wallet. Revocation is the correct response when an emergency wallet is known to be compromised — the legitimate participant uses their primary wallet to announce revocation of the compromised emergency wallet, waits out the delay, and the compromised wallet loses all identity contract authority.
+
+#### 2.5.6 Griefing and Rate Limiting
+
+An attacker holding a registered wallet MAY announce rotations or revocations repeatedly as harassment without intending to complete them. The `rotation_announcement_cooldown` governance parameter defines the minimum period between rotation or revocation announcements from the same identity contract. This limits harassment cost without creating urgency friction in legitimate operations.
+
+The structural resolution to a compromised registered wallet is revocation (Section 2.5.5), not cancellation of individual announcements.
+
+#### 2.5.7 Master Secret Re-encryption on Rotation
+
+When a Creator's active wallet changes via rotation, the master secret blob MUST be re-encrypted to the new wallet public key. If an emergency wallet is registered, the blob MUST be re-encrypted to both. Re-encryption requires access to the current master secret, which requires the current active wallet or any registered emergency wallet to decrypt the existing blob. See Section 4.7 for re-encryption mechanics.
+
+#### 2.5.8 Client Convenience Layers
+
+Client implementations MAY provide username and password authentication as a convenience layer over wallet signing. In this pattern, the client stores wallet key material encrypted by the user's password locally on the device.
+
+Client implementations MAY offer email-based password recovery. In this pattern, email resets the local client password only. Email recovery requires device access — the encrypted key material lives on the device, not on any server. A participant who loses both their device and their seed phrase loses wallet access regardless of email recovery. Email recovery is not a substitute for the seed phrase.
+
+Client implementations offering convenience authentication layers MUST:
+- Never transmit wallet private key material or seed phrases to any external party, including the instance
+- Store wallet key material encrypted locally on the participant's device only
+- Be open source to permit community auditability of the above guarantees
+- Communicate clearly at onboarding what each recovery path does and does not protect against
+
+The instance MUST NOT receive the client password or unencrypted wallet key material at any point.
 
 ### 2.6 On-Chain Subscription State Visibility
 
@@ -241,6 +317,8 @@ All content MUST be encrypted before storage on any instance. Instances MUST sto
 
 **Master secret:** Each Creator holds a master secret — a cryptographic secret from which all content keys for that Creator are derived. The master secret is generated by the Creator's client at account creation. The master secret is stored on the instance encrypted to the Creator's wallet public key. The instance cannot read the master secret without the Creator's wallet private key.
 
+When an emergency wallet is registered, the master secret blob MUST be re-encrypted to both the primary wallet public key and the emergency wallet public key. Either wallet can decrypt the blob independently. The instance stores one blob encrypted to multiple recipients. This re-encryption MUST occur at the time of emergency wallet registration. Subsequent wallet rotations MUST update the blob accordingly (Section 4.7, Section 2.5.7).
+
 **Content key derivation:** Content keys are derived on demand from the master secret at access time. Content keys are NOT stored independently on the instance. Key derivation requires the master secret to be decrypted by the Creator's client, or delegated to an instance-side derivation service operating on the encrypted master secret unlocked by a valid wallet signature.
 
 Each tier and each shop item has an independent derivation path. Keys are derived as:
@@ -273,6 +351,7 @@ Instances MUST NOT store:
 - Decryption keys in recoverable form
 - Creator or Subscriber real identity information
 - Wallet private keys or seed phrases
+- The encrypted master secret blob client-local only — the instance is the authoritative store; the client MAY cache it locally for performance but MUST NOT be the sole holder
 
 ### 4.3 Content Addressing
 
@@ -301,14 +380,26 @@ Passive deletion MUST follow the content lifecycle defined in Section 4.5 — th
 
 ### 4.7 Key Rotation
 
-A Creator MAY rotate their master secret at any time. Key rotation is a supported protocol operation with the following effects:
+A Creator MAY rotate their master secret at any time. Key rotation is a supported protocol operation and is explicitly a normal proactive operation — not an emergency-only one. A Creator who suspects future compromise SHOULD re-encrypt before compromise is confirmed rather than after. The protocol supports this without restriction.
 
-- New content key is derived from the new master secret
-- All existing content is re-encrypted with new keys — the Creator's client pulls existing content, decrypts, re-encrypts, pushes new ciphertext, and updates content references
-- New content fingerprints are registered; old fingerprints become orphaned
-- Active Subscribers receive updated access via the new key derivation on their next access request
+**Who can initiate re-encryption:** Re-encryption MAY be initiated by the Creator's primary wallet or by any registered emergency wallet independently. Primary wallet presence is not required. This is the designed path when the primary wallet is inaccessible or untrusted.
 
-Re-encryption cost is proportional to total content volume and is borne by the Creator. The protocol does not subsidize re-encryption. Key rotation is the correct response to a compromised master secret. Re-encryption protects forward access; content already accessed by a party holding the old key cannot be retroactively protected. Re-encryption and the associated on-chain content reference updates are initiated by the Creator. Transaction fees are borne by the Creator.
+**Effects of key rotation:**
+
+- New master secret generated
+- New content keys derived from new master secret
+- All existing content re-encrypted — Creator's client (or emergency wallet client) pulls existing ciphertext, decrypts with old keys, re-encrypts with new keys, pushes new ciphertext
+- New content fingerprints registered on-chain; old fingerprints become orphaned
+- Master secret blob re-encrypted to current active wallet and any registered emergency wallets (Section 4.1)
+- Active Subscribers receive updated access via new key derivation on their next access request — no Subscriber action required
+
+**Tier-level atomicity:** Re-encryption proceeds tier by tier. Access to a tier in progress is briefly suspended while that tier re-encrypts, then restored. Subscribers on tiers not yet reached retain normal access throughout. Full library lockout is not required. Client implementations SHOULD communicate the re-encryption state to affected Subscribers transparently.
+
+**On-chain reference updates:** Each piece of re-encrypted content produces a new fingerprint requiring an on-chain content reference update. Client implementations SHOULD batch content reference updates into as few transactions as possible. Per-item transactions at meaningful content volumes produce unnecessary fee overhead that is entirely avoidable.
+
+**Cost:** Re-encryption cost is proportional to total content volume and is borne by the Creator. The protocol does not subsidize re-encryption. Transaction fees for on-chain reference updates are borne by the Creator.
+
+**Scope:** Re-encryption protects forward access. Content already accessed and locally retained by a party holding the old key cannot be retroactively protected. This is stated honestly and is consistent with all encrypted content systems.
 
 ### 4.8 Shop Item and Pack Storage
 
@@ -763,6 +854,8 @@ The following values MAY be adjusted through the governance process without a fu
 | `subscription_expiry_grace_period` | Buffer after subscription expiry before access revocation (max 24 hours) | Set at launch |
 | `creator_response_window` | Time Creator has to respond to a moderation report | Set at launch |
 | `csam_suspension_duration` | Automatic reinstatement duration after no law enforcement action is taken within the suspension period of CSAM suspension | Suggested: 30 days |
+| `wallet_rotation_delay` | Time-delay window for unilateral wallet rotation or revocation before it completes without the old wallet's signature; any registered wallet can cancel during this window | Set at launch |
+| `rotation_announcement_cooldown` | Minimum period between rotation or revocation announcements from the same identity contract; limits griefing cost from a compromised registered wallet | Set at launch |
 
 Initial values for all governance parameters are set through the initial governance process at protocol launch. This specification defines the parameter names and the adjustment process. It does not fix initial values.
 
@@ -785,6 +878,8 @@ The following are explicitly not protocol concerns:
 **User account management.** Client concern.
 
 **Fiat-to-crypto onramp services.** Client concern. The protocol SHOULD NOT make the path unnecessarily opaque but MUST NOT mandate specific onramp providers.
+
+**Client-layer convenience authentication.** Email recovery, password recovery, biometric authentication, and MFA are client-layer concerns with no protocol-level definition. They protect against casual unauthorized device access. They do not constitute protocol-level security guarantees. Client implementations offering these features MUST NOT transmit wallet private key material or seed phrases to any external party including the instance. Client implementations offering these features MUST be open source to permit community auditability of that guarantee. Client implementations MUST communicate clearly at onboarding what each convenience recovery path does and does not protect against — specifically that email recovery resets a local client password only and does not recover wallet access if the device is lost, and that the seed phrase remains the sole true last-resort recovery mechanism.
 
 **Photographic content of real human beings.** This protocol is designed for illustrated and written content. Photographic content platforms have different legal and technical requirements — rights management, real identity verification, DMCA infrastructure — that this protocol is not designed to address. Communities built around photographic content should use infrastructure designed for that purpose.
 
@@ -865,13 +960,29 @@ Considered as an internal protocol-level review panel for CSAM reports. Rejected
 **Creator master secret held on creator device only — rejected**
 Considered as maximum privacy model. Rejected: requires Creator device to be online for all Subscriber access requests, creating a liveness dependency incompatible with normal Creator behavior. Replaced by master secret stored on instance encrypted to Creator wallet public key — ciphertext the instance cannot read (Section 4.1).
 
+**EVM as canonical identity chain — decided**
+Base (EVM L2) is the canonical identity chain. Identity contracts are deployed on Base. All participants require an EVM wallet for identity contract operations regardless of which payment rail they transact on. TRON and Solana are payment rails; they are not identity rails. Rationale: EVM smart contract tooling is the most mature available; Base is the chosen primary L2; the identity contract proxy pattern is well-validated on EVM; stating this explicitly prevents inconsistent cross-chain identity assumptions across client and instance implementations. Genuine multi-chain identity parity — where a Solana-native participant could hold identity state on Solana with no EVM requirement — is deferred to V2. The V1 position is stated honestly rather than implied.
+
+**Per-participant proxy identity contract — decided**
+Each participant deploys a proxy smart contract on Base at first registration. The contract address is their stable DEN identifier. The proxy holds their current active wallet and registered emergency wallets. Wallet rotation updates the proxy's internal state; the address never changes; downstream references require no migration. The participant holds the upgrade key — no central protocol authority can upgrade any participant's contract. The protocol publishes reference implementation addresses; participants upgrade at will. Rationale: no global registry means no single point of failure; stable address means no downstream migration on rotation; participant-held upgrade key means no centralization vector for contract logic changes; the proxy pattern is the standard EVM solution to the immutable-contract upgrade problem without reintroducing central authority.
+
+**Emergency wallet as participant-held mitigation — decided**
+Participants MAY register emergency wallets against their identity contract. The emergency wallet is encrypted as an additional recipient on the master secret blob and holds independent authority over high-stakes identity operations. This is distinct from protocol-held recovery infrastructure (rejected — see above): the protocol stores nothing additional; the participant controls all key material; the instance stores one blob encrypted to multiple participant-held keys. The mechanism mitigates the lost-primary-wallet scenario without creating a compellable target. Registration is optional; participants who omit it accept the full loss risk of single-wallet custody. Rationale: removes the false binary between "no recovery" and "protocol-held recovery"; the participant's own second wallet is not a new attack surface on the protocol, it is an extension of the participant's own custody model.
+
+**ZK pseudonymous rotation deliberately deferred to V2**
+Zero-knowledge proof of identity continuity — allowing wallet rotation without publishing the old-to-new wallet linkage on-chain — is technically feasible but deferred. Rationale: ZK tooling ecosystem is not yet mature enough for V1 without adding significant maintenance burden; the proxy contract model is designed to be participant-upgradeable, providing the correct upgrade path when tooling matures; the V1 position (on-chain linkage visible to chain analysts) is stated honestly in Section 2.6 rather than obscured. Participants who require stronger rotation privacy SHOULD use operational security practices at the wallet level rather than relying on protocol-layer privacy guarantees not yet available.
+
+**Protocol-level wallet recovery infrastructure — rejected** *(expanded)*
+Considered as a usability accommodation. Rejected: any recovery mechanism the protocol holds creates a compellable target — an entity that can compel recovery infrastructure can impersonate any participant; custody of recovery information is functionally equivalent to custody of identity. This rejection applies specifically to protocol-held recovery infrastructure. It does not apply to participant-held emergency wallets (see above), which are a different mechanism: the participant controls all key material, the protocol holds nothing, and no new compellable target is created. Client implementations MAY provide password-based and email-based convenience layers over locally-stored encrypted wallet key material — these are not protocol-level recovery, they are the client encrypting the participant's own keys on the participant's own device (Section 2.5.8, Section 14).
+
 ## Appendix B — Open Questions Summary
 
 A consolidated list of all open questions flagged in the sections above, for tracking before spec drafting begins.
 
 | Section | Open Question | Spec Impact | Status |
 |---------|--------------|-------------|--------|
-| 2.5 | Active smart contract subscription state and purchase state referencing potential old wallet identity — both require migration when a Creator or Subscriber rotates their wallet address; a stable on-chain identity indirection layer is needed so rotation updates one record rather than requiring all active subscriber contracts and purchase records to be migrated | Implementation decision | Open |
+| 2.5 | ZK pseudonymous rotation — on-chain wallet linkage on rotation is visible to chain analysts; ZK proof of identity continuity would allow rotation without publishing the link; deferred pending tooling maturity; proxy contract upgrade path is designed to accommodate this | V2 scope — deliberately deferred | Deferred |
+| 2.5 | TRON/Solana identity parity — participants on non-EVM rails currently require an EVM wallet for identity operations; genuine multi-chain identity parity is a significant engineering problem | V2 scope — deliberately deferred | Deferred |
 | 14 | Reference client name, scope, and development timeline | Project decision — outside protocol spec | Open |
 
 ---
