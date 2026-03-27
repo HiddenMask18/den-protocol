@@ -69,7 +69,15 @@ These aren't rules imposed on contributors — they're how this project runs. If
 - One logical change per commit. Clean history is readable history.
 - If you're new to signed commits, GitHub's documentation on [commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification) is a reasonable starting point.
 
+---
 
+## Conflict of Interest in Governance Votes
+
+Maintainers who also operate instances have a direct financial interest in governance parameters that affect hoster compensation: `storage_rate`, `bandwidth_rate`, `progressive_rate_parameters`, and `protocol_fee_pct`. This conflict is real regardless of intent.
+
+The norm: declare the interest before participating in any related governance vote. Recuse where the community's trust in the outcome requires it. Declaration without recusal is acceptable — during the bootstrap phase there may not be enough non-conflicted maintainers to reach rough consensus without conflicted voices participating. Undeclared participation is not acceptable.
+
+This applies to the founding maintainer. The founding instance operates under the same compensation formula as every other instance. There is no founding instance premium. Any vote on hoster compensation parameters where the founding maintainer is also the operator of a significant instance should be declared and considered for recusal on its merits.
 
 ---
 

@@ -407,15 +407,25 @@ Storage allocation per Creator is governed by the Creator's trust tier as define
 Content exists in one of the following states:
 
 - **Active:** Accessible to Subscribers with valid subscription state
+- **Archived:** Creator-designated state indicating content is no longer actively maintained. Content remains accessible to Subscribers with valid subscription state. No new access tiers may be assigned to archived content. Hosters MAY treat archived content differently in internal storage management provided it remains accessible as required. Archiving is creator-initiated and voluntary.
 - **Sunset notice issued:** Creator has been notified of pending removal; migration tools active; no new subscriptions accepted; existing Subscribers retain access
 - **Subscriber protection window:** Read-only access for Subscribers active at notice time; access persists until their paid period lapses naturally
 - **Deleted:** Content removed from instance storage; content fingerprint record retained for audit purposes
 
-Transitions between states are governed by Section 7 (operator-initiated removal) and Section 15 (voluntary Creator departure).
+Transitions between states are governed by Section 7 (operator-initiated removal) and Section 15 (voluntary Creator departure). The archived state is creator-initiated at any time and does not affect subscriber access or the compensation formula.
 
 ### 4.6 Passive Data Deletion
 
-Content storage is tied to continued economic activity. An instance MAY begin passive data deletion procedures when a Creator has no active Subscribers and no inbound transactions within the inactivity grace period. The inactivity grace period is a governance parameter defined in Section 13.
+Content storage is tied to continued participation, not economic activity alone. An instance MAY begin passive data deletion procedures only when BOTH of the following conditions are met within the inactivity grace period:
+
+1. The Creator has no active Subscribers on this instance
+2. The Creator has had no content activity — uploads, edits, or archiving — within the inactivity grace period
+
+Both conditions MUST be present simultaneously. A Creator with no subscribers but who is actively uploading content is NOT inactive. A Creator with no recent content activity but who retains active subscribers is NOT inactive. New Creators with zero subscribers are explicitly protected by this dual-condition requirement — the deletion clock does not start at account creation.
+
+The `storage_compensation_lookback` threshold (Section 7.2) is a separate mechanism governing whether a hoster can claim compensation for a given Creator's storage. It does not govern deletion. A Creator may exist in a state where they generate no compensable storage claim but are still protected from deletion by ongoing content activity.
+
+The inactivity grace period is a governance parameter defined in Section 13.
 
 Passive deletion MUST follow the content lifecycle defined in Section 4.5 — the Creator MUST be notified and a sunset notice issued before deletion begins. Passive deletion MUST NOT bypass the subscriber protection window for any Subscribers active at notice time.
 
@@ -563,22 +573,36 @@ A compliant instance operator MUST:
 - Follow the defined removal process for any Creator content removal
 - Release Creator portable data on migration request
 - Participate in batch settlement as defined in Section 7.3
+- Pin all active content tiers to IPFS or equivalent content-addressed redundant storage. Pinning MUST be maintained for the duration of any active subscription period. Archived content SHOULD be pinned. Content in the subscriber protection window MUST remain pinned until all active subscriptions at notice time have lapsed.
 
-### 7.2 Hoster Compensation
+#### 7.2 Hoster Compensation
 
-Hosters are compensated by the protocol via resource-based smart contract settlement. The compensation formula is:
+Hosters are compensated via a per-creator escrow model. The flow is:
 
-`hoster_fee = (storage_consumed_GB × storage_rate) + (bandwidth_served_GB × bandwidth_rate)`
+1. A protocol fee of `protocol_fee_pct` is collected from each subscription payment at the smart contract level and routed to a per-creator escrow — not a central treasury
+2. The Hoster claims from each Creator's escrow based on the resource formula:
 
-Storage and bandwidth rates are governance parameters defined in Section 13. Compensation routes peer-to-peer via smart contract. No platform intermediary holds or distributes Hoster compensation.
+`hoster_claim = (storage_consumed_GB × storage_rate) + (bandwidth_served_GB × bandwidth_rate)`
 
-Hoster compensation is deliberately decoupled from Creator earnings. A Hoster earns identically per gigabyte regardless of whether the hosted Creator earns five dollars or five thousand. The incentive is efficient infrastructure, not selective hosting of profitable Creators.
+3. Unclaimed escrow above the hoster's formula-based claim returns to the Creator at each settlement interval
+
+All compensation routes peer-to-peer via smart contract. No platform intermediary holds or distributes Hoster compensation. There is no central treasury.
+
+**Rate design intent:** Storage and bandwidth rates are governance parameters set deliberately above market infrastructure cost. The margin embedded in the rate compensates for operational overhead — maintenance time, variance, infrastructure risk — without requiring explicit labor accounting. The design target is economic viability for a technically capable community member running a small instance as a side operation, not just hardware reimbursement. An ecosystem of sustainable small operators is the distributed hosting model working correctly. Rates set at pure cost recovery produce centralization pressure because only well-capitalized operators survive operational variance, which is the precondition for institutional capture. Rates for smaller instances SHOULD be calibrated higher than for larger instances — the governance rate table SHOULD reflect that per-creator overhead is higher at small scale. The progressive calibration intent is a governance design constraint, not a fixed spec value.
+
+**Storage compensation threshold:** A Hoster MUST NOT claim storage compensation from a Creator's escrow if that Creator has had zero verified active subscribers on that instance within the `storage_compensation_lookback` window. A Creator with no verified subscribers within this window generates no compensable storage claim regardless of content volume. This is the arithmetic consequence of the escrow model — no subscription revenue means no fee pool means no compensable claim. The threshold and the passive deletion trigger in Section 4.6 are separate mechanisms: the threshold stops hoster compensation; the dual-condition deletion trigger governs when content is actually removed.
+
+**Migration window exclusion:** The storage compensation threshold MUST NOT apply during an active migration — from the point of sunset notice or voluntary departure initiation until the receiving instance countersigns the migration confirmation (Section 2.5.9). A Creator mid-migration may have zero local subscribers while actively migrating an existing subscriber base. Applying the threshold during this window would penalize legitimate migration.
+
+**Hoster compensation is decoupled from Creator earnings.** A Hoster's claim is determined by resources consumed, not by how much the Creator earns. The incentive is efficient infrastructure, not selective hosting of profitable Creators.
 
 ### 7.3 Batch Settlement
 
-Resource usage is metered continuously. Settlement to the blockchain occurs in defined intervals. The settlement interval is a governance parameter defined in Section 13. Claimed storage MUST be verifiable against content fingerprints recorded on-chain — overclaimed storage is detectable and constitutes a protocol violation.
+Resource usage is metered continuously. Settlement to the blockchain occurs in defined intervals. The settlement interval is a governance parameter defined in Section 13. The Hoster initiates settlement transactions and bears the associated transaction fees as an operating cost. Storage and bandwidth rates set at launch SHOULD account for transaction fee overhead.
 
-The Hoster initiates settlement transactions and bears the associated transaction fees as an operating cost. Storage and bandwidth rates set at launch SHOULD account for transaction fee overhead.
+**Storage verification:** Claimed storage MUST be verifiable against content fingerprints recorded on-chain. Overclaimed storage is detectable and constitutes a protocol violation.
+
+**Bandwidth verification:** Bandwidth cannot be verified on-chain with the same precision as storage. The first version of this protocol uses a declared-plus-auditable model: Hosters declare bandwidth consumption; the declaration is recorded on-chain and is auditable by the community. Systematic overclaiming of bandwidth is detectable through anomaly analysis — bandwidth claims that are implausible relative to subscriber count and content volume are a signal of abuse. The governance process handles substantiated overclaim findings. A more rigorous on-chain bandwidth verification mechanism is a named governance evolution item and MAY be added by amendment without requiring redesign of the storage verification model.
 
 ### 7.4 Above-Floor Content Standards
 
@@ -613,12 +637,27 @@ Operator-initiated content removal MUST follow this process:
 - Retract a sunset notice once issued
 - Impose friction on Creator migration beyond technical process requirements
 - Restrict chain or wallet compatibility in ways that lock Creators to the instance
+- Present instance-specific URLs as canonical or shareable Creator identifiers in client interfaces (see Section 2.5.9 and Section 6.4)
 
 ### 7.7 Instance Failure vs Deliberate Eviction
 
 **Instance failure** — unplanned infrastructure event — is handled by the portability guarantee and content-addressed storage redundancy. It is not governed by the removal process. Creators and Subscribers affected by instance failure initiate migration under Section 8 and Section 15.
 
 **Deliberate eviction** — operator-initiated removal — MUST follow the removal process in Section 7.5 without exception. An operator MUST NOT claim infrastructure failure to bypass the removal process.
+
+### 7.8 Compliance Registry
+
+The protocol maintains a governance-operated compliance registry — a public record of instance compliance status. The registry has two states:
+
+**Recognized** — default state for any instance operating without active compliance findings. Recognition is not an endorsement of community standards or content policy. It means the instance has no substantiated protocol violation findings against it.
+
+**Non-compliant** — applied only after a governance finding with documented reasoning following the community process defined in Section 10. The finding MUST state the specific spec requirement violated and the evidence supporting the finding.
+
+A compliant instance MAY decline to accept Creator migrations from an instance with an active non-compliant finding. A compliant instance MAY surface non-compliant status to users when routing to such an instance. These are permissions, not requirements.
+
+The founding maintainer MUST NOT unilaterally add or remove instances from the compliance registry. Registry changes are governance decisions, not editorial decisions.
+
+Community instance directories — lists maintained by community members recommending instances based on content standards, reliability, or community fit — are explicitly not a protocol function. The protocol does not maintain, endorse, or control any instance recommendation list. The compliance registry records compliance; recommendation is the community's domain.
 
 ---
 
@@ -871,15 +910,23 @@ Any protocol floor violation determination resulting in content removal is appea
 
 Every fee in this protocol is stated explicitly in this specification. No fee may exist that is not listed here. No fee listed here MAY be changed without governance approval. Hidden fees and unilateral fee changes are protocol violations.
 
-### 13.2 Hoster Compensation Formula
+### 13.2 Hoster Compensation Model
 
-`hoster_fee = (storage_consumed_GB × storage_rate) + (bandwidth_served_GB × bandwidth_rate)`
+The protocol fee is collected from each subscription payment and routed to a per-creator escrow. The Hoster claims from the escrow based on the resource formula. Surplus above the hoster's claim returns to the Creator. All flows are peer-to-peer via smart contract. There is no central treasury.
 
-Storage rate and bandwidth rate are governance parameters. All compensation routes peer-to-peer via smart contract. There is no central treasury.
+`hoster_claim = (storage_consumed_GB × storage_rate) + (bandwidth_served_GB × bandwidth_rate)`
+
+Storage rate and bandwidth rate are governance parameters. The protocol fee percentage is a governance parameter defined in Section 13.3.
 
 ### 13.3 Protocol-Level Fee
 
-If a protocol-level fee is introduced, it MUST be encoded in this specification, publicly visible, and changeable only by governance vote. No protocol-level fee is defined in this version of the specification.
+A protocol fee of `protocol_fee_pct` is applied to each subscription payment. This fee is collected at the smart contract level and routed to a per-creator escrow from which the Hoster claims resource compensation. Surplus returns to the Creator (Section 7.2).
+
+The fee percentage is a governance parameter. Initial value: 2.5%.
+
+**Adjustment intent:** Downward adjustments are preferred when surplus consistently exceeds hoster compensation requirements — this directly benefits Creator take-home. Upward adjustments require explicit justification against the creator sustainability principle in Section 1. The fee is evaluated against Creator sustainability as the primary metric; hoster compensation sustainability as the secondary metric.
+
+Every fee in this protocol is stated in this specification. No fee may exist that is not listed here. No fee listed here MAY be changed without governance approval. Hidden fees and unilateral fee changes are protocol violations.
 
 ### 13.4 Governance Parameters — Complete List
 
@@ -907,7 +954,9 @@ The following values MAY be adjusted through the governance process without a fu
 | `handle_change_period` | Period over which the handle change allowance applies before refreshing | Set at launch |
 | `handle_alias_retention_window` | Duration a superseded handle continues resolving as an alias before release for re-registration | Set at launch |
 | `resolver_cache_ttl` | Maximum duration a client MAY cache on-chain identity record resolution results; mandatory fresh resolution always required before any transaction regardless of cache state | Set at launch |
-
+| `protocol_fee_pct` | Protocol fee as percentage of each subscription payment, routed to per-creator escrow. Initial value: 2.5%. Downward adjustments preferred when surplus consistently exceeds hoster compensation requirements. | 2.5% |
+| `storage_compensation_lookback` | Window within which a Creator must have at least one verified active subscriber for hoster storage compensation to be claimable from that Creator's escrow. Migration window excluded from calculation. | Set at launch |
+| `progressive_rate_parameters` | Governance-calibrated rate multiplier intent for storage and bandwidth rates — smaller instances should receive higher effective rates than larger instances to reflect higher per-creator overhead at small scale. Specific rate table set at launch. | Set at launch |
 
 Initial values for all governance parameters are set through the initial governance process at protocol launch. This specification defines the parameter names and the adjustment process. It does not fix initial values.
 
