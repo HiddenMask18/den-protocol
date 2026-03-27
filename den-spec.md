@@ -49,6 +49,16 @@ These terms are used throughout this specification without re-definition. Where 
 
 **Wallet rotation** — the protocol operation by which a participant updates the active wallet address recorded in their identity contract. Rotation does not change the identity contract address. All subscriptions, purchase state, content references, and trust tier history continue to resolve against the same identity contract address after rotation.
 
+**On-chain identity record** — a structured record held within a Creator's identity contract containing: the Creator's current instance URL, current active handle (if registered), recent handle aliases within the `handle_alias_retention_window`, and chronological instance migration history. The on-chain identity record is the authoritative resolver for mapping a Creator's stable identity contract address to their current serving instance. Instance migration updates require both a signed Creator transaction and a countersignature from the receiving instance confirming the migration has landed before the record is updated.
+
+**Handle** — a human-readable pseudonymous identifier a participant MAY register against their identity contract as a convenience alias. A handle resolves to the participant's identity contract address. Handle registration requires the registering wallet to have at least one prior on-chain transaction. Handles are unique across the protocol — first registration wins, enforced by the smart contract. Handle changes are rate-limited by the `handle_change_allowance` and `handle_change_period` governance parameters. There is no fee for registration or change within the allowance.
+
+**Handle alias** — a previously active handle superseded by a new handle registration. Handle aliases continue to resolve to the same identity contract address for the duration of the `handle_alias_retention_window` governance parameter. Resolution of a handle alias SHOULD return deprecation metadata indicating the participant's current active handle. After the retention window expires, the alias is released for re-registration by any participant.
+
+**Active migration tag** — an on-chain flag set on a Creator's identity record when a migration is in progress, from the point of sunset notice or voluntary departure initiation until the receiving instance countersigns the migration confirmation. The active migration tag exempts the Creator from the `storage_compensation_lookback` threshold calculation for the duration of the migration.
+
+**Compliance registry** — a governance-maintained public record of instance compliance status. Two states: recognized (default, no active compliance findings) and non-compliant (requires a governance finding with documented reasoning and community process under Section 10). The founding maintainer MUST NOT unilaterally add or remove instances from the compliance registry. Community instance directories are a separate concern and are not a protocol function.
+
 ---
 
 ### The Three Denizens
@@ -238,6 +248,37 @@ Client implementations offering convenience authentication layers MUST:
 - Communicate clearly at onboarding what each recovery path does and does not protect against
 
 The instance MUST NOT receive the client password or unencrypted wallet key material at any point.
+
+#### 2.5.9 On-Chain Identity Record and Handle System
+
+Identity record contents: A Creator's identity contract holds an on-chain identity record containing:
+
+- Current instance URL — where the Creator's content is currently served
+- Current active handle, if registered
+- Recent handle aliases within the handle_alias_retention_window, with deprecation metadata
+- Chronological instance migration history
+
+This record is the authoritative resolver for all Creator discovery. Compliant clients MUST resolve Creator identity via this on-chain record before routing.
+Migration record updates: When a Creator migrates to a new instance, the identity record update MUST follow this two-step process:
+
+1. Signed transaction from the Creator's active wallet announcing the migration and new instance URL
+2. Countersignature from the receiving instance confirming it has the Creator's portable data set and is ready to serve Subscribers
+
+The record MUST NOT update to the new instance URL until both signatures are present. The active migration tag is set on the Creator's identity record from announcement until countersign.
+
+**Handle registration:** Handle registration requires the registering wallet to have at least one prior on-chain transaction. Fresh wallets with no transaction history MUST NOT register handles. This limits mass squatting without imposing a financial barrier. Handle changes are rate-limited by the `handle_change_allowance` and `handle_change_period` governance parameters. Allowance refreshes after each period. There is no fee for registration or change within allowance.
+
+**Handle uniqueness and collision:** Handles are unique across the protocol. First registration wins, enforced by the smart contract. A handle already registered as either an active handle or a current alias MUST NOT be registered by another participant.
+
+**Handle aliases:** When a participant changes their handle, the old handle becomes an alias resolving to the same identity contract address for the duration of the `handle_alias_retention_window`. Alias resolution SHOULD return deprecation metadata indicating the current active handle so clients can surface "this creator now goes by X." After the retention window expires the alias releases and becomes available for re-registration by any participant.
+
+**Client resolution requirements:**
+- For profile browsing: clients MAY cache identity record resolution results for up to resolver_cache_ttl. Stale routing during the cache window is acceptable — the Creator's prior instance continues serving during any migration window.
+- For any transaction (subscription payment, shop item purchase, pack purchase): clients MUST perform a fresh on-chain identity record resolution immediately before initiating the transaction. Cached results MUST NOT be used for payment routing under any circumstances.
+
+**Canonical identifier requirement:** A compliant client MUST NOT present an instance-specific URL as the canonical or shareable Creator identifier in any context where a Subscriber would store or share it. The canonical identifier is always the Creator's identity contract address or registered handle. Shareable links generated by compliant clients MUST use the form `den://[handle]` or `den://[identity-contract-address]`, never an instance-domain URL. Presenting instance-specific URLs as canonical identifiers is a compliance violation — it creates soft migration lock-in by training Subscribers to store URLs that break on instance change.
+
+**Instance hopping:** A pattern of rapid successive migrations is detectable through the on-chain migration history. A Creator with anomalous migration frequency MAY be reviewed by the governance process as a potential compliance issue. The on-chain migration history exists in part to make this pattern auditable.
 
 ### 2.6 On-Chain Subscription State Visibility
 
@@ -492,9 +533,15 @@ Creators MAY designate specific posts as publicly visible without a subscription
 
 ### 6.4 Stable Creator URL
 
-A Creator's public profile URL MUST be stable and instance-independent. Because Creator identity is wallet-based, the profile URL resolves correctly regardless of which instance the Creator is currently hosted on. A link posted on an external platform today MUST resolve correctly after a Creator migrates instances.
+A Creator's public profile URL MUST be stable and instance-independent. A link posted on an external platform today MUST resolve correctly after a Creator migrates instances.
 
-The URL scheme MUST address Creators by wallet address or a registered pseudonymous identifier, never by instance address alone.
+The mechanism is the on-chain identity record defined in Section 2.5.9. The Creator's identity contract address and registered handle are the canonical identifiers. These never change on migration — only the serving instance URL within the identity record updates, via the countersigned migration process.
+
+Compliant clients MUST resolve Creator identity via the on-chain identity record before routing. Direct routing to a cached instance URL without checking the identity record will break after migration when the cache expires. Clients MUST follow the resolution and caching requirements in Section 2.5.9.
+
+A compliant client MUST NOT present an instance-specific URL as the canonical or shareable Creator identifier. This is a compliance violation equivalent in effect to operator-side migration friction — it trains Subscribers to store URLs that break on migration, converting client behavior into soft lock-in. The specific requirement: shareable links MUST use `den://[handle]` or `den://[identity-contract-address]` format.
+
+Community links and external sites that use instance-specific URLs are outside protocol control. The compliance requirement applies to clients claiming DEN compliance.
 
 ### 6.5 No Login Wall Before Subscription Decision
 
@@ -856,6 +903,11 @@ The following values MAY be adjusted through the governance process without a fu
 | `csam_suspension_duration` | Automatic reinstatement duration after no law enforcement action is taken within the suspension period of CSAM suspension | Suggested: 30 days |
 | `wallet_rotation_delay` | Time-delay window for unilateral wallet rotation or revocation before it completes without the old wallet's signature; any registered wallet can cancel during this window | Set at launch |
 | `rotation_announcement_cooldown` | Minimum period between rotation or revocation announcements from the same identity contract; limits griefing cost from a compromised registered wallet | Set at launch |
+| `handle_change_allowance` | Number of handle changes permitted per `handle_change_period` before allowance refreshes | Set at launch |
+| `handle_change_period` | Period over which the handle change allowance applies before refreshing | Set at launch |
+| `handle_alias_retention_window` | Duration a superseded handle continues resolving as an alias before release for re-registration | Set at launch |
+| `resolver_cache_ttl` | Maximum duration a client MAY cache on-chain identity record resolution results; mandatory fresh resolution always required before any transaction regardless of cache state | Set at launch |
+
 
 Initial values for all governance parameters are set through the initial governance process at protocol launch. This specification defines the parameter names and the adjustment process. It does not fix initial values.
 
