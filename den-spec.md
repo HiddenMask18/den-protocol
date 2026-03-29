@@ -375,6 +375,8 @@ The type namespace prefix prevents collisions between derivation paths. Content 
 
 This model supports both hierarchical tiers (where higher tiers declare grants to lower tiers) and parallel tiers (distinct tiers at the same level with no declared grant between them). Parallel tiers are fully supported.
 
+**Access grant declaration signatures:** Access grant declarations MUST be signed by the Creator's active wallet at the time of authorship or modification. The signature MUST be stored alongside the declaration as part of the portable data set. Unsigned declarations and declarations whose signatures do not verify against the Creator's identity contract MUST be rejected. This requirement applies at two mandatory points: receiving instances MUST verify declaration signatures before accepting declarations during migration (Section 8.2); instances MUST verify declaration signatures before executing key derivation at any access request. A declaration that cannot be verified at access request time MUST cause the request to fail — key derivation MUST NOT proceed on an unverified declaration.
+
 **Content encryption:** Each piece of content is encrypted with a content key derived from the Creator's master secret and the content's tier or item assignment. Content is encrypted once per tier or item — not once per Subscriber. Superset access is governed by access grant declarations, not by duplicate content storage.
 
 **Shop item and pack derivation:** Shop item content is encrypted under a derivation path keyed by item ID. Pack purchases are on-chain purchase state records referencing a pack ID. The pack, as a content object, declares which item derivation paths the purchase unlocks via its access grant declaration. Pack state is current, not historical: access reflects what the pack currently declares.
@@ -480,9 +482,10 @@ Content access is governed entirely by on-chain subscription state. No platform 
 
 1. Subscriber authenticates via wallet signing (Section 2.2)
 2. Instance verifies subscription state on-chain for the requested tier
-3. If subscription state is active: instance returns the content key derived from the Creator's master secret for the requested content
-4. Subscriber's client decrypts content locally
-5. If subscription state is inactive: instance returns an access denial; no key is derived or transmitted
+3. Instance verifies the signature on the Creator's access grant declaration for the requested tier against the Creator's identity contract
+4. If subscription state is active: instance returns the content key derived from the Creator's master secret for the requested content
+5. Subscriber's client decrypts content locally
+6. If subscription state is inactive: instance returns an access denial; no key is derived or transmitted
 
 ### 5.3 Subscription Window
 
@@ -690,6 +693,7 @@ This data is always-held, not requestable-on-departure. A Creator who needs to m
 
 **Receiving instance MUST:**
 - Accept a Creator presenting valid portable data and a signed wallet authentication
+- Verify the wallet signature on all access grant declarations in the portable data set against the Creator's identity contract before accepting them; reject any unsigned or unverifiable declaration
 - Restore subscription state from the portable subscriber list
 - Accept content references and make content addressable under the new instance
 - Store the encrypted master secret blob in the same manner as any hosted Creator
