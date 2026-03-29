@@ -956,7 +956,7 @@ The following values MAY be adjusted through the governance process without a fu
 | `rotation_announcement_cooldown` | Minimum period between rotation or revocation announcements from the same identity contract; limits griefing cost from a compromised registered wallet | Set at launch |
 | `handle_change_allowance` | Number of handle changes permitted per `handle_change_period` before allowance refreshes | Set at launch |
 | `handle_change_period` | Period over which the handle change allowance applies before refreshing | Set at launch |
-| `handle_alias_retention_window` | Duration a superseded handle continues resolving as an alias before release for re-registration | Set at launch |
+| `handle_alias_retention_window` | Duration a superseded handle continues resolving as an alias before release for re-registration | Suggested: 180 days |
 | `resolver_cache_ttl` | Maximum duration a client MAY cache on-chain identity record resolution results; mandatory fresh resolution always required before any transaction regardless of cache state | Set at launch |
 | `protocol_fee_pct` | Protocol fee as percentage of each subscription payment, shop item purchase, and pack purchase, routed to per-creator escrow. Initial value: 2.5%. Downward adjustments preferred when surplus consistently exceeds hoster compensation requirements. | 2.5% |
 | `storage_compensation_lookback` | Window within which a Creator must have at least one verified active subscriber for hoster storage compensation to be claimable from that Creator's escrow. Migration window excluded from calculation. | Set at launch |
