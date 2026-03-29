@@ -452,6 +452,10 @@ A Creator MAY rotate their master secret at any time. Key rotation is a supporte
 
 **Tier-level atomicity:** Re-encryption proceeds tier by tier. Access to a tier in progress is briefly suspended while that tier re-encrypts, then restored. Subscribers on tiers not yet reached retain normal access throughout. Full library lockout is not required. Client implementations SHOULD communicate the re-encryption state to affected Subscribers transparently.
 
+**Resumability:** Re-encryption operations MUST be resumable after interruption. Client implementations MUST NOT require a full restart if the process is interrupted — for example by a client crash or connectivity loss. Resume state is derived from on-chain content fingerprints: tiers whose new fingerprints are already registered on-chain have completed re-encryption; tiers whose fingerprints remain at the pre-rotation values have not. A resuming client derives this state directly from the chain without requiring any separate progress record. Re-encryption resumes from the first incomplete tier.
+
+**Master secret blob replacement timing:** The master secret blob MUST NOT be replaced on the instance until all tiers have completed re-encryption. The old blob remains the authoritative decryption source for the duration of re-encryption. Replacing the blob before all tiers are complete would leave in-progress tiers undecryptable by both old and new keys simultaneously. Blob replacement is the final step of a successful rotation, not an early step.
+
 **On-chain reference updates:** Each piece of re-encrypted content produces a new fingerprint requiring an on-chain content reference update. Client implementations SHOULD batch content reference updates into as few transactions as possible. Per-item transactions at meaningful content volumes produce unnecessary fee overhead that is entirely avoidable.
 
 **Cost:** Re-encryption cost is proportional to total content volume and is borne by the Creator. The protocol does not subsidize re-encryption. Transaction fees for on-chain reference updates are borne by the Creator.
