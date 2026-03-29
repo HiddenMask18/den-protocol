@@ -348,6 +348,8 @@ Auto-renewal does not apply to shop item or pack purchases. Auto-renewal is a su
 
 Shop item and pack purchases count toward Creator trust tier graduation under the same rules as subscription transactions (Section 9.2).
 
+The protocol fee `protocol_fee_pct` applies to shop item and pack purchases identically to subscription payments. The fee is collected at the smart contract level at the point of purchase and routed to the per-creator escrow, from which the Hoster claims resource compensation under the standard formula (Section 7.2).
+
 ---
 
 ## Section 4 — Content and Storage Layer
@@ -407,7 +409,7 @@ Storage allocation per Creator is governed by the Creator's trust tier as define
 Content exists in one of the following states:
 
 - **Active:** Accessible to Subscribers with valid subscription state
-- **Archived:** Creator-designated state indicating content is no longer actively maintained. Content remains accessible to Subscribers with valid subscription state. No new access tiers may be assigned to archived content. Hosters MAY treat archived content differently in internal storage management provided it remains accessible as required. Archiving is creator-initiated and voluntary.
+- **Archived:** Creator-designated state indicating content is no longer actively maintained. Content remains accessible to Subscribers with valid subscription state and to buyers with valid purchase state. No new access tiers may be assigned to archived content. Hosters MAY treat archived content differently in internal storage management provided it remains accessible as required. Archiving is creator-initiated and voluntary. Access for purchase state holders is conditioned on the content continuing to exist on the instance — hosters are not permanent file keepers for purchased content.
 - **Sunset notice issued:** Creator has been notified of pending removal; migration tools active; no new subscriptions accepted; existing Subscribers retain access
 - **Subscriber protection window:** Read-only access for Subscribers active at notice time; access persists until their paid period lapses naturally
 - **Deleted:** Content removed from instance storage; content fingerprint record retained for audit purposes
@@ -426,6 +428,8 @@ Both conditions MUST be present simultaneously. A Creator with no subscribers bu
 The `storage_compensation_lookback` threshold (Section 7.2) is a separate mechanism governing whether a hoster can claim compensation for a given Creator's storage. It does not govern deletion. A Creator may exist in a state where they generate no compensable storage claim but are still protected from deletion by ongoing content activity.
 
 The inactivity grace period is a governance parameter defined in Section 13.
+
+**Purchase state does not block passive deletion.** Active on-chain purchase state for shop items or packs is not a condition that protects content from passive deletion. A Creator with no active subscribers and no content activity meets the deletion conditions regardless of how many buyers hold purchase state for their content. Purchase state is permanent on-chain; content availability is not. Client implementations MUST communicate clearly at the point of purchase that access to purchased content is contingent on the content continuing to exist on the instance, and that buyers who wish to retain content permanently SHOULD download it at time of purchase.
 
 Passive deletion MUST follow the content lifecycle defined in Section 4.5 — the Creator MUST be notified and a sunset notice issued before deletion begins. Passive deletion MUST NOT bypass the subscriber protection window for any Subscribers active at notice time.
 
@@ -511,7 +515,7 @@ Purchase-based access follows the same verification structure as subscription-ba
 5. Buyer's client decrypts content locally
 6. If no purchase state exists: instance returns access denial; no key is derived or transmitted
 
-**No expiry.** Purchase state does not expire. Access revocation on lapse does not apply to purchase-based access. A wallet with valid purchase state retains access as long as the content exists on the instance.
+**No expiry.** Purchase state does not expire. Access revocation on lapse does not apply to purchase-based access. A wallet with valid purchase state retains access as long as the content exists on the instance. Purchase state is permanent; content availability is not. Buyers SHOULD download purchased content they wish to retain permanently.
 
 **Pack resolution.** For pack purchases, the instance resolves the pack's current access grant declaration at access time. Access reflects current pack state.
 
@@ -912,7 +916,7 @@ Every fee in this protocol is stated explicitly in this specification. No fee ma
 
 ### 13.2 Hoster Compensation Model
 
-The protocol fee is collected from each subscription payment and routed to a per-creator escrow. The Hoster claims from the escrow based on the resource formula. Surplus above the hoster's claim returns to the Creator. All flows are peer-to-peer via smart contract. There is no central treasury.
+The protocol fee is collected from each subscription payment, shop item purchase, and pack purchase and routed to a per-creator escrow. The Hoster claims from the escrow based on the resource formula. Surplus above the hoster's claim returns to the Creator. All flows are peer-to-peer via smart contract. There is no central treasury.
 
 `hoster_claim = (storage_consumed_GB × storage_rate) + (bandwidth_served_GB × bandwidth_rate)`
 
@@ -920,7 +924,7 @@ Storage rate and bandwidth rate are governance parameters. The protocol fee perc
 
 ### 13.3 Protocol-Level Fee
 
-A protocol fee of `protocol_fee_pct` is applied to each subscription payment. This fee is collected at the smart contract level and routed to a per-creator escrow from which the Hoster claims resource compensation. Surplus returns to the Creator (Section 7.2).
+A protocol fee of `protocol_fee_pct` is applied to each subscription payment, shop item purchase, and pack purchase. This fee is collected at the smart contract level and routed to a per-creator escrow from which the Hoster claims resource compensation. Surplus returns to the Creator (Section 7.2).
 
 The fee percentage is a governance parameter. Initial value: 2.5%.
 
@@ -954,9 +958,10 @@ The following values MAY be adjusted through the governance process without a fu
 | `handle_change_period` | Period over which the handle change allowance applies before refreshing | Set at launch |
 | `handle_alias_retention_window` | Duration a superseded handle continues resolving as an alias before release for re-registration | Set at launch |
 | `resolver_cache_ttl` | Maximum duration a client MAY cache on-chain identity record resolution results; mandatory fresh resolution always required before any transaction regardless of cache state | Set at launch |
-| `protocol_fee_pct` | Protocol fee as percentage of each subscription payment, routed to per-creator escrow. Initial value: 2.5%. Downward adjustments preferred when surplus consistently exceeds hoster compensation requirements. | 2.5% |
+| `protocol_fee_pct` | Protocol fee as percentage of each subscription payment, shop item purchase, and pack purchase, routed to per-creator escrow. Initial value: 2.5%. Downward adjustments preferred when surplus consistently exceeds hoster compensation requirements. | 2.5% |
 | `storage_compensation_lookback` | Window within which a Creator must have at least one verified active subscriber for hoster storage compensation to be claimable from that Creator's escrow. Migration window excluded from calculation. | Set at launch |
-| `progressive_rate_parameters` | Governance-calibrated rate multiplier intent for storage and bandwidth rates — smaller instances should receive higher effective rates than larger instances to reflect higher per-creator overhead at small scale. Specific rate table set at launch. | Set at launch |
+| `progressive_rate_parameters` | Governance-calibrated rate table mapping instance size brackets to storage and bandwidth rate multipliers. Smaller instances receive higher effective rates reflecting higher per-creator overhead at small scale. Instance size is computed as `creator_count + subscription_relationship_count`, where `subscription_relationship_count` is the total number of active subscription relationships on the instance — a subscriber to multiple creators on the same instance counts once per relationship. Same-instance subscription relationships are excluded by the same logic as Section 9.3. Specific bracket thresholds and multipliers set at launch and recalibrated by governance as operational data accumulates. | Set at launch |
+| `instance_size_brackets` | The numeric thresholds defining small, medium, and large instance size brackets for progressive rate calculation. Values are counts of the instance size formula output. | Set at launch |
 
 Initial values for all governance parameters are set through the initial governance process at protocol launch. This specification defines the parameter names and the adjustment process. It does not fix initial values.
 
