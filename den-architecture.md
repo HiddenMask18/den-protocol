@@ -397,7 +397,7 @@ These are the non-negotiable architectural assumptions against which every other
 
 **Scope:**
 - Every protocol-level fee stated explicitly in the spec — no hidden fees, no fees changeable without governance approval
-- Resource-based hoster compensation formula: storage (per GB) + bandwidth (per GB transferred) = hoster fee; settled via smart contract transaction in periodic batches
+- Resource-based hoster compensation formula — bracket-aware rates applied to storage consumed and bandwidth served, capped at the available fee pool; rates calibrated to maintain stable creator effective fee (~1.8%) across all brackets above micro; settled via smart contract in periodic batches
 - No central treasury — all fees route peer-to-peer via smart contract
 - Protocol-level fee if any: encoded in spec, publicly visible, changeable only by governance vote
 - Fee change process: governance approval only; not configurable by any individual or instance operator
@@ -565,6 +565,9 @@ Considered as an explicit maintenance labor line item in the resource formula �
 
 **Handle registration fee — rejected**
 Considered as a mechanism to deter handle squatting by making registration financially costly. Rejected because registration fees gate participation on wealth, which is inconsistent with the protocol's values. Replaced by rate-limited free changes (governance parameters `handle_change_allowance` and `handle_change_period`) combined with the wallet-must-have-prior-transaction requirement. Rate limiting gates on time rather than money — a neutral barrier that deters mass squatting without excluding participants on financial grounds.
+
+**Declining rate multiplier for larger instances — rejected**
+Considered as a mechanism to reduce per-unit compensation at larger instance sizes on the grounds that larger instances have lower per-creator overhead. Rejected because declining rates applied to a large fee pool produce a small hoster claim and route most of the 2.5% fee pool back to creators as surplus, collapsing the creator effective fee at large instance sizes — in tested scenarios below 0.25% — while maintaining it near 2.5% at small instances. The fee differential creates a direct financial incentive for creators to migrate toward the largest available instance. Because creator portability is a protocol guarantee, creators can act on this incentive freely and rationally. The result is fee-driven ecosystem centralization: the largest instances attract creators not through better content policy or community but through lower effective fee. This is functionally identical to platform capture by a different mechanism and is the failure mode the federated architecture is designed to prevent. Replaced by stable creator effective fee targeting (~1.8%) across all brackets above micro, with the large bracket carrying higher per-unit rates than medium to maintain fee stability despite the larger fee pool. See Section 7.2 rate design intent for implementation detail.
 
 ---
 
