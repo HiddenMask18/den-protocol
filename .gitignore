@@ -1,1 +1,28 @@
-./vscode/
+# Foundry build artifacts
+contracts/out/
+contracts/cache/
+
+# Foundry broadcast (keep non-dry-run for record, ignore dry-run)
+contracts/broadcast/*/dry-run/
+
+# Environment files — never commit keys or RPC URLs
+.env
+*.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Key material — belt and suspenders
+*.pem
+*.key
+keystore/
