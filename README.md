@@ -23,8 +23,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to raise something.
 ## Read First
 
 - [MANIFESTO.md](./MANIFESTO.md) — why this exists and what it stands for
-- [den-architecture.md](./den-architecture.md) — architecture decisions and design rationale
-- [den-spec.md](./den-spec.md) — protocol specification v0.1-draft
+- [den-architecture.md](./spec/den-architecture.md) — architecture decisions and design rationale
+- [den-spec.md](./spec/den-spec.md) — protocol specification v0.1-draft
 
 ## License
 

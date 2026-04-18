@@ -11,8 +11,8 @@ If you're here, you're probably technically capable and care about what this pro
 Before contributing anything, read these in order:
 
 - [MANIFESTO.md](./MANIFESTO.md) — why this exists
-- [den-architecture.md](./den-architecture.md) — design rationale and rejected alternatives
-- [den-spec.md](./den-spec.md) — binding implementation requirements
+- [den-architecture.md](./spec/den-architecture.md) — design rationale and rejected alternatives
+- [den-spec.md](./spec/den-spec.md) — binding implementation requirements
 
 The architecture document in particular exists so design decisions don't get re-litigated from scratch. If the thing you want to propose is already in Appendix A under "rejected," that section explains why. If you think the rejection reasoning is wrong, make that argument directly — but read the reasoning first.
 

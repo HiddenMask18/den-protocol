@@ -15,12 +15,13 @@ contracts/broadcast/*/dry-run/
 .DS_Store
 Thumbs.db
 
-# Editor
+# Editor workspace environment
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.aider*
 
 # Key material — belt and suspenders
 *.pem
