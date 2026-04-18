@@ -20,6 +20,11 @@ Looking for 2-3 technical contributors, ideally with EVM/Solidity experience or 
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to raise something.
 
+After cloning, initialize the contract library dependency:
+```bash
+git submodule update --init
+```
+
 ## Read First
 
 - [MANIFESTO.md](./MANIFESTO.md) — why this exists and what it stands for
