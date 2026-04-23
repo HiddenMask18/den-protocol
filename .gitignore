@@ -22,6 +22,9 @@ Thumbs.db
 *.swo
 *~
 .aider*
+.claude*
+CLAUDE.md
+CLAUDE.local.md
 
 # Key material — belt and suspenders
 *.pem

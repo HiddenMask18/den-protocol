@@ -24,4 +24,13 @@ contract DENIdentity is IDENIdentity {
     function getIdentityAddress(address wallet) external view returns (address) {
         return _identityAddress[wallet];
     }
+
+    // Stub implementations — superseded by DENIdentityRegistry.
+    function getProxy(address wallet) external view returns (address) {
+        return _identityAddress[wallet];
+    }
+
+    function resolve(string calldata) external pure returns (address) {
+        return address(0);
+    }
 }
