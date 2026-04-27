@@ -21,8 +21,11 @@ contract DENIdentityImpl is IDENParticipantIdentity {
     string private _instanceURL;            // slot 5
     address[] private _emergencyWalletList; // slot 6
     mapping(address => bool) private _emergencyWallets; // slot 7
+    address private _pendingRevokedWallet;   // slot 8
+    uint256 private _revocationExecuteAfter; // slot 9
+    uint256 private _urlUpdateNonce;         // slot 10
 
-    // Governance parameter: delay before compromise rotation executes (3 days for V1).
+    // Governance parameter: delay before compromise rotation or revocation executes (3 days for V1).
     // Must become a governance parameter in a future upgrade.
     uint256 public constant WALLET_ROTATION_DELAY = 3 days;
 
@@ -75,6 +78,14 @@ contract DENIdentityImpl is IDENParticipantIdentity {
         return (_pendingNewWallet, _rotationExecuteAfter);
     }
 
+    function pendingRevocation() external view returns (address wallet, uint256 executeAfter) {
+        return (_pendingRevokedWallet, _revocationExecuteAfter);
+    }
+
+    function urlUpdateNonce() external view returns (uint256) {
+        return _urlUpdateNonce;
+    }
+
     // --- Emergency wallet management ---
 
     function registerEmergencyWallet(address wallet) external onlyPrimary {
@@ -86,16 +97,54 @@ contract DENIdentityImpl is IDENParticipantIdentity {
         emit EmergencyWalletRegistered(wallet);
     }
 
-    function revokeEmergencyWallet(address wallet) external onlyAuthorized {
+    // Announces a time-delayed revocation. Any registered wallet can cancel during the delay window.
+    // Revocation follows the same time-delay mechanism as unilateral rotation (spec §2.5.5).
+    function announceEmergencyWalletRevocation(address wallet) external onlyAuthorized {
         require(_emergencyWallets[wallet], "Not emergency wallet");
+        require(_revocationExecuteAfter == 0, "Revocation already pending");
+        _pendingRevokedWallet = wallet;
+        _revocationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY;
+        emit EmergencyWalletRevocationAnnounced(msg.sender, wallet, _revocationExecuteAfter);
+    }
+
+    // Cancel a pending revocation. Any registered wallet can cancel during the delay window.
+    function cancelEmergencyWalletRevocation() external onlyAuthorized {
+        require(_revocationExecuteAfter != 0, "No pending revocation");
+        address wallet = _pendingRevokedWallet;
+        _pendingRevokedWallet = address(0);
+        _revocationExecuteAfter = 0;
+        emit EmergencyWalletRevocationCancelled(msg.sender, wallet);
+    }
+
+    // Execute revocation after the delay has elapsed.
+    function executeEmergencyWalletRevocation() external {
+        require(_revocationExecuteAfter != 0, "No pending revocation");
+        require(block.timestamp >= _revocationExecuteAfter, "Delay not elapsed");
+        address wallet = _pendingRevokedWallet;
         _emergencyWallets[wallet] = false;
         _removeFromList(wallet);
+        _pendingRevokedWallet = address(0);
+        _revocationExecuteAfter = 0;
         emit EmergencyWalletRevoked(wallet);
     }
 
     // --- Instance URL ---
 
-    function updateInstanceURL(string calldata url) external onlyPrimary {
+    // Update the instance URL. Non-empty URL requires a countersignature from the receiving
+    // instance's primary wallet confirming it holds the Creator's portable data set (spec §2.5.9).
+    // Pass empty url with zero address and empty sig to clear without countersig.
+    function updateInstanceURL(
+        string calldata url,
+        address receivingInstanceProxy,
+        bytes calldata instanceSig
+    ) external onlyPrimary {
+        if (bytes(url).length > 0) {
+            bytes32 structHash = keccak256(abi.encode("DEN-url-confirm", address(this), url, _urlUpdateNonce));
+            bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
+            address instancePrimary = IDENParticipantIdentity(receivingInstanceProxy).primaryWallet();
+            require(_recoverSigner(ethHash, instanceSig) == instancePrimary, "Invalid instance signature");
+            _urlUpdateNonce++;
+        }
         _instanceURL = url;
         emit InstanceURLUpdated(url);
     }
@@ -103,9 +152,11 @@ contract DENIdentityImpl is IDENParticipantIdentity {
     // --- Wallet rotation ---
 
     // Clean rotation: both wallets accessible.
+    // Requires the current primary wallet as caller — it is the "old wallet" in the dual-signature
+    // scheme (spec §2.5.4). Emergency wallets use initiateCompromiseRotation for unilateral rotation.
     // newWallet must sign: keccak256(abi.encode("DEN-clean-rotation", proxyAddress, nonce))
-    // using Ethereum personal sign (prefixed with "\x19Ethereum Signed Message:\n32").
-    function initiateCleanRotation(address newWallet, bytes calldata newWalletSig) external onlyAuthorized {
+    // using Ethereum personal sign (\x19Ethereum Signed Message:\n32 prefix).
+    function initiateCleanRotation(address newWallet, bytes calldata newWalletSig) external onlyPrimary {
         require(newWallet != address(0), "Zero address");
         require(newWallet != _primaryWallet, "Already primary");
         require(_rotationExecuteAfter == 0, "Compromise rotation pending");
@@ -121,9 +172,8 @@ contract DENIdentityImpl is IDENParticipantIdentity {
     }
 
     // Compromise rotation step 1: initiate time-locked rotation.
-    // Only callable by an emergency wallet (primary is assumed inaccessible).
-    function initiateCompromiseRotation(address newWallet) external {
-        require(_emergencyWallets[msg.sender], "Only emergency wallet");
+    // Any registered wallet (primary or emergency) may announce a unilateral rotation (spec §2.5.4).
+    function initiateCompromiseRotation(address newWallet) external onlyAuthorized {
         require(newWallet != address(0), "Zero address");
         require(_rotationExecuteAfter == 0, "Rotation already pending");
         _pendingNewWallet = newWallet;

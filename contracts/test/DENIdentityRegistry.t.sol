@@ -355,4 +355,38 @@ contract DENIdentityRegistryTest is Test {
         assertTrue(registry.isRegistered(alice));
         assertFalse(registry.isRegistered(bob));
     }
+
+    // --- isRegisteredProxy ---
+
+    function test_IsRegisteredProxy_AfterRegister() public {
+        vm.prank(alice);
+        registry.register();
+        address proxy = registry.getProxy(alice);
+        assertTrue(registry.isRegisteredProxy(proxy));
+    }
+
+    function test_IsRegisteredProxy_UnknownAddress() public {
+        assertFalse(registry.isRegisteredProxy(makeAddr("unknown")));
+    }
+
+    function test_IsRegisteredProxy_StaysValidAfterWalletSync() public {
+        vm.prank(alice);
+        registry.register();
+        address proxy = registry.getProxy(alice);
+
+        // Clean rotation: alice → bob
+        uint256 nonce = IDENParticipantIdentity(proxy).rotationNonce();
+        bytes32 structHash = keccak256(abi.encode("DEN-clean-rotation", proxy, nonce));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(bobKey, ethHash);
+
+        vm.prank(alice);
+        IDENParticipantIdentity(proxy).initiateCleanRotation(bob, abi.encodePacked(r, s, v));
+
+        vm.prank(bob);
+        registry.syncWallet(proxy);
+
+        // Proxy is still a registered proxy after wallet rotation
+        assertTrue(registry.isRegisteredProxy(proxy));
+    }
 }

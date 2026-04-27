@@ -135,6 +135,10 @@ contract DENIdentityRegistry is IDENIdentity {
         return _proxyByWallet[wallet] != address(0);
     }
 
+    function isRegisteredProxy(address proxy) external view returns (bool) {
+        return _walletByProxy[proxy] != address(0);
+    }
+
     // Returns the proxy address for a wallet (stable identity address per spec §2.3).
     function getIdentityAddress(address wallet) external view returns (address) {
         return _proxyByWallet[wallet];

@@ -30,6 +30,10 @@ contract DENIdentity is IDENIdentity {
         return _identityAddress[wallet];
     }
 
+    function isRegisteredProxy(address) external pure returns (bool) {
+        return false;
+    }
+
     function resolve(string calldata) external pure returns (address) {
         return address(0);
     }
