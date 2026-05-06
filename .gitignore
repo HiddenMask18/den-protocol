@@ -1,3 +1,9 @@
+# Instance — Node/Bun artifacts and local database files
+instance/node_modules/
+instance/*.db
+instance/*.db-shm
+instance/*.db-wal
+
 # Foundry build artifacts
 contracts/out/
 contracts/cache/

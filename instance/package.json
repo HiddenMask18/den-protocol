@@ -1,0 +1,20 @@
+{
+  "name": "den-instance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.8.0",
+    "@noble/hashes": "^1.7.0",
+    "hono": "^4.7.0",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
