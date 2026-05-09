@@ -12,7 +12,11 @@ Instances are federated and independently operated. Creator identity, subscriber
 
 ## Current State
 
-The protocol specification and architecture are drafted. No implementation exists yet. The next milestone is a Base testnet prototype of the core subscription loop.
+The protocol specification and architecture are complete. Implementation is underway in two layers:
+
+**On-chain contracts** (`contracts/`) — complete. Five contracts covering identity (proxy-keyed, rotation-safe), subscriptions (escrow + expiry), content lifecycle (fingerprint registry, sunset flow), access grant declarations (signed tier→path mappings), and purchase state. 188 passing tests.
+
+**Off-chain instance** (`instance/`) — Phase 2 of 4 complete. The auth layer, chain client, SQLite schema, ECIES blob encryption, HKDF key derivation, on-chain access gate, and subscriber/buyer key delivery endpoint are all implemented. Phase 3 (creator tooling — blob upload, content storage, grant publishing) is next.
 
 ## Contributing
 

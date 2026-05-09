@@ -77,17 +77,25 @@ Sessions expire after 24 hours. The returned `proxy` is the stable DEN identity 
 ```
 src/
 ├── chain/
-│   ├── abis.ts       # ABI slices for the five DEN contracts
-│   ├── client.ts     # viem publicClient (read-only chain connection)
-│   └── contracts.ts  # Typed contract instances
+│   ├── abis.ts         # ABI slices for the five DEN contracts
+│   ├── client.ts       # viem publicClient (read-only chain connection)
+│   └── contracts.ts    # Typed contract instances
 ├── auth/
-│   ├── nonce.ts      # In-memory challenge nonce store (5-min TTL, one-time use)
-│   ├── verify.ts     # Signature verification + proxy resolution via identity registry
-│   ├── middleware.ts  # Bearer token session validation for protected routes
-│   └── routes.ts     # GET /auth/challenge, POST /auth/verify
+│   ├── nonce.ts        # In-memory challenge nonce store (5-min TTL, one-time use)
+│   ├── verify.ts       # Signature verification + proxy resolution via identity registry
+│   ├── middleware.ts   # Bearer token session validation for protected routes
+│   └── routes.ts       # GET /auth/challenge, POST /auth/verify
+├── crypto/
+│   ├── derive.ts       # Pure HKDF-SHA256 key derivation (tier/item paths)
+│   └── blob.ts         # Instance master key management; per-creator ECIES encrypt/decrypt
+├── grants/
+│   └── store.ts        # Access grant DB CRUD + off-chain signature verification
+├── access/
+│   ├── gate.ts         # Live on-chain subscription/purchase entitlement checks
+│   └── routes.ts       # POST /access/key — key delivery for subscribers and buyers
 ├── db/
-│   └── index.ts      # SQLite init and schema (sessions, blobs, content, grants)
-└── index.ts          # Entry point — Hono app, route registration
+│   └── index.ts        # SQLite init and schema (sessions, blobs, content, grants)
+└── index.ts            # Entry point — Hono app, route registration
 ```
 
 ## Implementation Status
@@ -97,13 +105,14 @@ src/
 | Auth layer (wallet challenge/response, session tokens) | Done |
 | Chain client + contract instances | Done |
 | SQLite database setup | Done |
-| Key derivation (HKDF, tier/item paths) | Planned |
-| Access grant store + verification | Planned |
-| Access gate (on-chain subscription/purchase checks) | Planned |
-| Subscriber/buyer content key delivery | Planned |
-| Master secret blob store | Planned |
-| Content storage (ciphertext + IPFS pinning) | Planned |
-| Creator content management API | Planned |
+| Key derivation (HKDF, tier/item paths) | Done |
+| ECIES master secret blob encryption | Done |
+| Access grant store + off-chain signature verification | Done |
+| Access gate (on-chain subscription/purchase checks) | Done |
+| Subscriber/buyer content key delivery (`POST /access/key`) | Done |
+| Master secret blob upload (creator tooling) | Next |
+| Content storage (ciphertext upload/download) | Next |
+| Creator content management API | Next |
 | Migration support (portable data set) | Planned |
 | Hoster compensation | Planned (needs on-chain contracts) |
 | Moderation layer | Planned (needs on-chain contracts) |

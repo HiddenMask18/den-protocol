@@ -40,8 +40,8 @@ export function initDb(): void {
   `);
 
   // Master secret blobs: the creator's encrypted master secret, stored as an opaque blob.
-  // The instance cannot read this — it's encrypted to the creator's wallet public key.
-  // Only the creator (holding their private key) can decrypt it.
+  // Encrypted to the instance-derived per-creator public key (B+ model). The instance
+  // decrypts on demand using the key derived from INSTANCE_MASTER_KEY — never stores plaintext.
   db.run(`
     CREATE TABLE IF NOT EXISTS master_secret_blobs (
       creator_proxy TEXT    PRIMARY KEY,

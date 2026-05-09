@@ -16,13 +16,17 @@
 
 import { Hono } from 'hono';
 import { initDb } from './db/index.ts';
+import { loadInstanceMasterKey } from './crypto/blob.ts';
 import { authRoutes } from './auth/routes.ts';
+import { accessRoutes } from './access/routes.ts';
 
 initDb();
+loadInstanceMasterKey();
 
 const app = new Hono();
 
 app.route('/auth', authRoutes);
+app.route('/access', accessRoutes);
 
 app.onError((err, c) => {
   console.error('[error]', err);

@@ -15,10 +15,12 @@ forge test
 
 ## Structure
 
-- `src/identity/` — DENIdentity implementation
-- `src/subscription/` — DENSubscription with escrow
-- `src/interfaces/` — IDENIdentity, IDENSubscription
-- `test/` — test suite
+- `src/identity/` — DENIdentityProxy (ERC-1967), DENIdentityImpl, DENIdentityRegistry
+- `src/subscription/` — DENSubscription (proxy-keyed tiers, escrow, sunset gate)
+- `src/content/` — DENContentRegistry (fingerprint lifecycle), DENAccessGrant (signed tier→path declarations)
+- `src/purchase/` — DENPurchaseState (permanent purchase records, escrow)
+- `src/interfaces/` — interface definitions for all five contracts
+- `test/` — 188-test suite covering all contracts
 
 ## Foundry Commands
 
