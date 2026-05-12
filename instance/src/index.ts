@@ -19,6 +19,8 @@ import { initDb } from './db/index.ts';
 import { loadInstanceMasterKey } from './crypto/blob.ts';
 import { authRoutes } from './auth/routes.ts';
 import { accessRoutes } from './access/routes.ts';
+import { creatorRoutes } from './creator/routes.ts';
+import { contentRoutes } from './content/routes.ts';
 
 initDb();
 loadInstanceMasterKey();
@@ -27,6 +29,8 @@ const app = new Hono();
 
 app.route('/auth', authRoutes);
 app.route('/access', accessRoutes);
+app.route('/creator', creatorRoutes);
+app.route('/content', contentRoutes);
 
 app.onError((err, c) => {
   console.error('[error]', err);

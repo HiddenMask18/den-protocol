@@ -15,6 +15,7 @@ import { chainClient } from './client.ts';
 import {
   accessGrantAbi,
   contentRegistryAbi,
+  identityImplAbi,
   identityRegistryAbi,
   purchaseStateAbi,
   subscriptionAbi,
@@ -22,7 +23,7 @@ import {
 
 function requireAddress(envVar: string): `0x${string}` {
   const addr = process.env[envVar];
-  if (!addr || !addr.startsWith('0x') || addr.length < 42) {
+  if (!addr || !addr.startsWith('0x') || addr.length !== 42) {
     throw new Error(
       `Environment variable ${envVar} must be a 0x-prefixed Ethereum address (42 chars). ` +
       `Deploy the contracts and set this value in your .env file.`,
@@ -60,3 +61,14 @@ export const contentRegistry = getContract({
   abi: contentRegistryAbi,
   client: chainClient,
 });
+
+// Each creator's proxy IS a deployed DENIdentityImpl contract — call it directly at the proxy
+// address to read live identity state. Used by the creator tooling routes to fetch the current
+// primary wallet for access grant signature verification.
+export async function getPrimaryWallet(proxyAddress: `0x${string}`): Promise<`0x${string}`> {
+  return chainClient.readContract({
+    address: proxyAddress,
+    abi: identityImplAbi,
+    functionName: 'primaryWallet',
+  });
+}

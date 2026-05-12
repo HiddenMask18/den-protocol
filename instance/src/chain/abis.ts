@@ -121,6 +121,19 @@ export const accessGrantAbi = [
   },
 ] as const;
 
+// DENIdentityImpl: the per-proxy identity contract deployed for each registered participant.
+// Each proxy IS a deployed DENIdentityImpl instance — call it directly at the proxy address.
+// Used to read the creator's current primary wallet for access grant signature verification.
+export const identityImplAbi = [
+  {
+    name: 'primaryWallet',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+] as const;
+
 // DENContentRegistry: tracks content fingerprints and their lifecycle states.
 // hasActiveSunset is used by the access gate — when a creator has an active sunset notice,
 // the instance should not accept new subscriptions (the contracts already enforce this, but

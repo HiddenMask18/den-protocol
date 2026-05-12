@@ -45,41 +45,123 @@ The server starts on `PORT` (default `3000`).
 
 ## API
 
+All routes except `GET /auth/challenge` and `GET /creator/blob-pubkey` require a session token as a Bearer header: `Authorization: Bearer <sessionToken>`.
+
 ### Authentication
 
-All participant-specific routes require a session token obtained via the auth flow below.
-
-**Step 1 — Request a challenge**
+**1. Request a challenge nonce**
 ```
 GET /auth/challenge?wallet=0x<address>
 → { nonce: "abc123..." }
 ```
 
-**Step 2 — Sign the nonce and verify**
+**2. Sign and verify**
 
-Sign the nonce string with your wallet using EIP-191 personal_sign (standard "sign message" supported by all wallets and libraries like viem/ethers).
-
+Sign the nonce string with your wallet using EIP-191 `personal_sign` (supported by all wallets and viem/ethers).
 ```
 POST /auth/verify
 Body: { wallet: "0x...", nonce: "abc123...", signature: "0x..." }
 → { sessionToken: "...", proxy: "0x..." }
 ```
 
-Include the session token as a Bearer token on all subsequent requests:
+Sessions expire after 24 hours. The returned `proxy` is the stable DEN identity — it doesn't change on wallet rotation.
+
+---
+
+### Creator tooling
+
+These routes are called by a creator client to set up content on the instance. All require auth.
+
+**Dual-blob master secret upload**
+
+The master secret is never sent in plaintext. The creator encrypts it twice client-side, using ECIES (secp256k1 ECDH + HKDF-SHA256 + AES-256-GCM, wire format `[33: ephPub][12: nonce][N+16: ciphertext+tag]`):
+
 ```
-Authorization: Bearer <sessionToken>
+# Step 1 — get the instance's per-creator public key
+GET /creator/blob-pubkey
+→ { pubKey: "0x02..." }   (33-byte compressed secp256k1 key, 0x-prefixed)
+
+# Step 2 — upload both encrypted blobs
+PUT /creator/blob
+Body: {
+  operationalBlob:  "0x...",   // master secret encrypted to instance pubKey above
+  portabilityBlob:  "0x..."    // master secret encrypted to creator's wallet pubKey
+}
+→ { stored: true }
+
+# Check upload status
+GET /creator/blob
+→ { exists: true }
+
+# Retrieve portability blob for migration / backup
+GET /creator/portability-blob
+→ <raw bytes, Content-Type: application/octet-stream>
 ```
 
-Sessions expire after 24 hours. The returned `proxy` is the stable DEN identity address — it stays the same even if the wallet rotates.
+`operationalBlob` is verified by the instance (decrypted to confirm correct key was used). `portabilityBlob` is stored as-is — the instance cannot decrypt it.
+
+**Content upload**
+
+Creators encrypt content client-side before uploading. The instance computes the SHA-256 fingerprint of the ciphertext — this is the same value to register on-chain via `DENContentRegistry.registerContent(fingerprint, tierId)`.
+
+```
+POST /creator/content
+Headers: X-Tier-Id: 1
+         X-Warnings: ["violence"]   (optional JSON array)
+Body: <raw ciphertext bytes, Content-Type: application/octet-stream>
+→ { fingerprint: "0x..." }
+
+GET /creator/content
+→ [{ fingerprint, tierId, timestamp, warnings }]
+```
+
+**Access grant publication**
+
+After publishing a grant on-chain via `DENAccessGrant.publishGrant(tierId, paths, signature)`, store it locally for the portable data set:
+
+```
+POST /creator/grant
+Body: { tierId: "1", paths: ["tier:1"], signature: "0x...", version: 1 }
+→ { stored: true }
+
+GET /creator/grant/:tierId
+→ { tierId, paths, version }
+```
+
+The signature must be the creator's EIP-191 signature over `keccak256(abi.encode("DEN-access-grant", proxy, tierId, pathsHash, version))`. Version must be `1` for new grants or `existing.version + 1` for updates.
+
+---
+
+### Content download (subscriber/buyer)
+
+```
+GET /content/:fingerprint
+→ <raw ciphertext bytes, Content-Type: application/octet-stream>
+```
+
+Auth required. No entitlement re-check — content key delivery (`POST /access/key`) already gates on live on-chain subscription/purchase state. Ciphertext is useless without the corresponding key.
+
+---
+
+### Key delivery (subscriber/buyer)
+
+```
+POST /access/key
+Body: { type: "subscription", creatorProxy: "0x...", tierId: "1" }
+   or { type: "purchase",     creatorProxy: "0x...", listingId: "42" }
+→ { keys: { "tier:1": "0xabc...", "tier:2": "0xdef..." } }
+```
+
+The instance checks on-chain entitlement live (no caching), decrypts the creator's master secret blob, derives one 32-byte key per derivation path in the access grant, and returns them. Keys are HKDF-SHA256 outputs — the subscriber uses them to decrypt downloaded ciphertext locally.
 
 ## Project Structure
 
 ```
 src/
 ├── chain/
-│   ├── abis.ts         # ABI slices for the five DEN contracts
+│   ├── abis.ts         # ABI slices for the five DEN contracts + identity impl
 │   ├── client.ts       # viem publicClient (read-only chain connection)
-│   └── contracts.ts    # Typed contract instances
+│   └── contracts.ts    # Typed contract instances + getPrimaryWallet()
 ├── auth/
 │   ├── nonce.ts        # In-memory challenge nonce store (5-min TTL, one-time use)
 │   ├── verify.ts       # Signature verification + proxy resolution via identity registry
@@ -87,12 +169,16 @@ src/
 │   └── routes.ts       # GET /auth/challenge, POST /auth/verify
 ├── crypto/
 │   ├── derive.ts       # Pure HKDF-SHA256 key derivation (tier/item paths)
-│   └── blob.ts         # Instance master key management; per-creator ECIES encrypt/decrypt
+│   └── blob.ts         # Instance master key; per-creator ECIES keypair derivation + decrypt
 ├── grants/
 │   └── store.ts        # Access grant DB CRUD + off-chain signature verification
 ├── access/
 │   ├── gate.ts         # Live on-chain subscription/purchase entitlement checks
 │   └── routes.ts       # POST /access/key — key delivery for subscribers and buyers
+├── creator/
+│   └── routes.ts       # Creator tooling: blob, content, and grant management
+├── content/
+│   └── routes.ts       # GET /content/:fingerprint — ciphertext download
 ├── db/
 │   └── index.ts        # SQLite init and schema (sessions, blobs, content, grants)
 └── index.ts            # Entry point — Hono app, route registration
@@ -106,13 +192,15 @@ src/
 | Chain client + contract instances | Done |
 | SQLite database setup | Done |
 | Key derivation (HKDF, tier/item paths) | Done |
-| ECIES master secret blob encryption | Done |
+| ECIES master secret blob encrypt/decrypt | Done |
 | Access grant store + off-chain signature verification | Done |
 | Access gate (on-chain subscription/purchase checks) | Done |
 | Subscriber/buyer content key delivery (`POST /access/key`) | Done |
-| Master secret blob upload (creator tooling) | Next |
-| Content storage (ciphertext upload/download) | Next |
-| Creator content management API | Next |
-| Migration support (portable data set) | Planned |
+| Creator master secret blob upload (dual-blob model) | Done |
+| Content upload/download | Done |
+| Creator content management API | Done |
+| Access grant local publication | Done |
+| Migration support (portable data set export/import) | Planned |
+| Key rotation (tier-by-tier re-encryption) | Planned |
 | Hoster compensation | Planned (needs on-chain contracts) |
 | Moderation layer | Planned (needs on-chain contracts) |

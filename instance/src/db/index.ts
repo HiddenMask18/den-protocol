@@ -39,29 +39,54 @@ export function initDb(): void {
     )
   `);
 
-  // Master secret blobs: the creator's encrypted master secret, stored as an opaque blob.
-  // Encrypted to the instance-derived per-creator public key (B+ model). The instance
-  // decrypts on demand using the key derived from INSTANCE_MASTER_KEY — never stores plaintext.
+  // Master secret blobs: two ECIES-encrypted copies of the creator's master secret.
+  //
+  // Dual-blob model:
+  //   blob             — operational blob, encrypted to the instance-derived per-creator pubkey.
+  //                      The instance decrypts this on demand at key delivery time. Creator cannot
+  //                      decrypt it (they don't hold the instance's private key).
+  //   portability_blob — portability blob, encrypted to the creator's own wallet pubkey.
+  //                      The instance cannot decrypt this. Only the creator can, using their wallet.
+  //                      Used for migration and recovery (spec §8.1).
+  //
+  // Both blobs are always ECIES ciphertext. Plaintext never persists in the database.
   db.run(`
     CREATE TABLE IF NOT EXISTS master_secret_blobs (
-      creator_proxy TEXT    PRIMARY KEY,
-      blob          BLOB    NOT NULL,
-      updated_at    INTEGER NOT NULL
+      creator_proxy    TEXT    PRIMARY KEY,
+      blob             BLOB    NOT NULL,
+      portability_blob BLOB,
+      updated_at       INTEGER NOT NULL
     )
   `);
 
-  // Content: metadata for each piece of encrypted content hosted on this instance.
+  type ColInfo = { name: string };
+
+  // Migration: add portability_blob column to existing databases.
+  const blobCols = db.query<ColInfo, []>('PRAGMA table_info(master_secret_blobs)').all();
+  if (!blobCols.some((c) => c.name === 'portability_blob')) {
+    db.run('ALTER TABLE master_secret_blobs ADD COLUMN portability_blob BLOB');
+  }
+
+  // Content: metadata and ciphertext for each piece of encrypted content hosted on this instance.
   // The fingerprint (SHA-256 hash of the ciphertext) is the stable content identifier —
   // the same fingerprint registered on-chain in DENContentRegistry.
+  // The ciphertext column stores the raw encrypted bytes; plaintext never touches the DB.
   db.run(`
     CREATE TABLE IF NOT EXISTS content (
       fingerprint   TEXT    PRIMARY KEY,
       creator_proxy TEXT    NOT NULL,
       tier_id       TEXT    NOT NULL,
+      ciphertext    BLOB    NOT NULL,
       timestamp     INTEGER NOT NULL,
       warnings      TEXT
     )
   `);
+
+  // Migration: add ciphertext column to existing databases that predate this schema change.
+  const contentCols = db.query<ColInfo, []>('PRAGMA table_info(content)').all();
+  if (!contentCols.some((c) => c.name === 'ciphertext')) {
+    db.run('ALTER TABLE content ADD COLUMN ciphertext BLOB');
+  }
 
   // Access grants: creator-signed declarations mapping tier IDs to key derivation paths.
   // These tell the instance which derivation path to use when a subscriber requests access
