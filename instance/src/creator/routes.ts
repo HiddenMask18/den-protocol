@@ -33,7 +33,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { requireAuth } from '../auth/middleware.ts';
 import { getDb } from '../db/index.ts';
 import { decryptBlob, deriveCreatorBlobKey } from '../crypto/blob.ts';
-import { getPrimaryWallet } from '../chain/contracts.ts';
+import { getPrimaryWallet, getIsEmergencyWallet } from '../chain/contracts.ts';
 import { getGrant, upsertGrant, verifyGrantSignature, type StoredGrant } from '../grants/store.ts';
 
 type SessionEnv = {
@@ -64,14 +64,19 @@ creatorRoutes.get('/blob-pubkey', requireAuth, (c) => {
 // then immediately zeros the plaintext. The portability blob is stored as-is — the instance
 // cannot decrypt it and does not attempt to.
 creatorRoutes.put('/blob', requireAuth, async (c) => {
-  let body: { operationalBlob?: string; portabilityBlob?: string };
+  let body: {
+    operationalBlob?: string;
+    portabilityBlob?: string;
+    emergencyPortabilityBlob?: string;
+    oracleUrl?: string;
+  };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: 'request body must be valid JSON' }, 400);
   }
 
-  const { operationalBlob, portabilityBlob } = body;
+  const { operationalBlob, portabilityBlob, emergencyPortabilityBlob, oracleUrl } = body;
 
   // Minimum valid ECIES blob: 33 (ephPub) + 12 (nonce) + 16 (authtag for empty plaintext) = 61 bytes
   // = 122 hex chars + 0x prefix = 124 chars total.
@@ -88,30 +93,68 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
   if (opErr) return c.json({ error: opErr }, 400);
   const portErr = validateBlobHex(portabilityBlob, 'portabilityBlob');
   if (portErr) return c.json({ error: portErr }, 400);
+  // emergencyPortabilityBlob is optional — only provided when an emergency wallet is registered.
+  if (emergencyPortabilityBlob !== undefined) {
+    const emErr = validateBlobHex(emergencyPortabilityBlob, 'emergencyPortabilityBlob');
+    if (emErr) return c.json({ error: emErr }, 400);
+  }
+
+  // oracleUrl is required — the creator must run an oracle holding their key share.
+  if (!oracleUrl || typeof oracleUrl !== 'string') {
+    return c.json({ error: 'oracleUrl is required (URL of the creator\'s key oracle)' }, 400);
+  }
+  try {
+    const u = new URL(oracleUrl);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+      return c.json({ error: 'oracleUrl must be an http or https URL' }, 400);
+    }
+  } catch {
+    return c.json({ error: 'oracleUrl is not a valid URL' }, 400);
+  }
 
   const proxy = c.get('proxy');
   const opBytes = fromHex(operationalBlob as `0x${string}`, 'bytes');
   const portBytes = fromHex(portabilityBlob as `0x${string}`, 'bytes');
+  const emPortBytes = emergencyPortabilityBlob
+    ? fromHex(emergencyPortabilityBlob as `0x${string}`, 'bytes')
+    : null;
 
-  // Verify the operational blob was encrypted to this creator's instance-derived key.
-  // Decryption failing means the creator used the wrong pubkey — reject with a clear error.
+  // Verify the operational blob was encrypted to this creator's instance-derived key and
+  // decrypts to exactly 32 bytes (the instance_share in the threshold split model).
   // The plaintext is zeroed immediately in the finally block.
-  let masterSecret: Uint8Array | undefined;
+  let instanceShare: Uint8Array | undefined;
   try {
     const { privKey } = deriveCreatorBlobKey(proxy);
-    masterSecret = await decryptBlob(opBytes, privKey);
+    instanceShare = await decryptBlob(opBytes, privKey);
+    if (instanceShare.length !== 32) {
+      return c.json(
+        { error: 'operationalBlob must decrypt to exactly 32 bytes (instance_share)' },
+        400,
+      );
+    }
   } catch {
     return c.json(
       { error: 'operationalBlob failed decryption — it must be encrypted to the pubkey from GET /creator/blob-pubkey' },
       400,
     );
   } finally {
-    masterSecret?.fill(0);
+    instanceShare?.fill(0);
   }
 
+  // If an emergency portability blob was provided, store it; otherwise preserve any existing one.
+  // COALESCE(excluded.emergency_portability_blob, emergency_portability_blob) keeps the old value
+  // when the incoming upload does not include one.
   getDb().run(
-    'INSERT OR REPLACE INTO master_secret_blobs (creator_proxy, blob, portability_blob, updated_at) VALUES (?, ?, ?, ?)',
-    [proxy, opBytes, portBytes, Date.now()],
+    `INSERT INTO master_secret_blobs
+       (creator_proxy, blob, portability_blob, emergency_portability_blob, oracle_url, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(creator_proxy) DO UPDATE SET
+       blob                       = excluded.blob,
+       portability_blob           = excluded.portability_blob,
+       emergency_portability_blob = COALESCE(excluded.emergency_portability_blob, emergency_portability_blob),
+       oracle_url                 = excluded.oracle_url,
+       updated_at                 = excluded.updated_at`,
+    [proxy, opBytes, portBytes, emPortBytes, oracleUrl, Date.now()],
   );
 
   return c.json({ stored: true });
@@ -119,25 +162,54 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
 
 creatorRoutes.get('/blob', requireAuth, (c) => {
   const proxy = c.get('proxy');
+  // Check that the operational blob (blob column) is present — not just the row.
+  // After a migration import, the row exists but blob is NULL until the creator
+  // re-uploads via PUT /creator/blob.
   const row = getDb()
-    .query<{ creator_proxy: string }, [string]>(
-      'SELECT creator_proxy FROM master_secret_blobs WHERE creator_proxy = ?',
+    .query<{ blob: Uint8Array | null }, [string]>(
+      'SELECT blob FROM master_secret_blobs WHERE creator_proxy = ?',
     )
     .get(proxy);
-  return c.json({ exists: row !== null });
+  return c.json({ exists: row !== null && row.blob !== null });
 });
 
-// Returns the creator's portability blob — the wallet-encrypted copy of their master secret.
-// Only the creator can decrypt this (using their wallet private key). Used for migration and
-// recovery. The instance stores it but cannot read it.
-creatorRoutes.get('/portability-blob', requireAuth, (c) => {
+// Returns the portability blob for the authenticated wallet.
+// Primary wallet → portability_blob (encrypted to primary wallet pubkey)
+// Emergency wallet → emergency_portability_blob (encrypted to emergency wallet pubkey)
+// The instance stores both but cannot decrypt either. Used for migration and recovery (spec §8.1).
+creatorRoutes.get('/portability-blob', requireAuth, async (c) => {
   const proxy = c.get('proxy');
-  type Row = { portability_blob: Uint8Array | null };
+  const wallet = c.get('wallet') as `0x${string}`;
+
+  type Row = { portability_blob: Uint8Array | null; emergency_portability_blob: Uint8Array | null };
   const row = getDb()
-    .query<Row, [string]>('SELECT portability_blob FROM master_secret_blobs WHERE creator_proxy = ?')
+    .query<Row, [string]>(
+      'SELECT portability_blob, emergency_portability_blob FROM master_secret_blobs WHERE creator_proxy = ?',
+    )
     .get(proxy);
 
-  if (!row || !row.portability_blob) {
+  if (!row) {
+    return c.json({ error: 'portability blob not found — upload blobs via PUT /creator/blob' }, 404);
+  }
+
+  // Check if the authenticated wallet is an emergency wallet so we serve the right blob.
+  let isEmergency = false;
+  try {
+    isEmergency = await getIsEmergencyWallet(proxy as `0x${string}`, wallet);
+  } catch {
+    return c.json({ error: 'failed to verify wallet role — check chain connectivity' }, 500);
+  }
+
+  if (isEmergency) {
+    if (!row.emergency_portability_blob) {
+      return c.json({ error: 'emergency portability blob not found — upload via PUT /creator/blob with emergencyPortabilityBlob' }, 404);
+    }
+    return new Response(new Uint8Array(row.emergency_portability_blob), {
+      headers: { 'Content-Type': 'application/octet-stream' },
+    });
+  }
+
+  if (!row.portability_blob) {
     return c.json({ error: 'portability blob not found — upload blobs via PUT /creator/blob' }, 404);
   }
 

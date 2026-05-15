@@ -33,15 +33,21 @@ contentRoutes.get('/:fingerprint', requireAuth, (c) => {
     return c.json({ error: 'fingerprint must be a 0x-prefixed 64-char hex string (SHA-256)' }, 400);
   }
 
-  type Row = { ciphertext: Uint8Array };
+  type Row = { ciphertext: Uint8Array | null; is_reference: number };
   const row = getDb()
-    .query<Row, [string]>('SELECT ciphertext FROM content WHERE fingerprint = ?')
+    .query<Row, [string]>('SELECT ciphertext, is_reference FROM content WHERE fingerprint = ?')
     .get(fingerprint);
 
-  // Guard against null ciphertext: the ALTER TABLE migration adds this column as nullable,
-  // so pre-migration rows (if any) would have NULL here. Treat them the same as not-found.
-  if (!row || !row.ciphertext) {
+  if (!row) {
     return c.json({ error: 'content not found on this instance' }, 404);
+  }
+
+  // Migration references (is_reference=1) have no ciphertext locally — bytes live on IPFS.
+  if (!row.ciphertext) {
+    return c.json(
+      { error: 'content is referenced but not yet available — ciphertext pending IPFS retrieval' },
+      row.is_reference ? 503 : 404,
+    );
   }
 
   // Wrap in new Uint8Array() to guarantee Uint8Array<ArrayBuffer> — required by Response BodyInit.

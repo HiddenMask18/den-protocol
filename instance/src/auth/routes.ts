@@ -26,8 +26,8 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 authRoutes.get('/challenge', (c) => {
   const wallet = c.req.query('wallet');
-  if (!wallet || !wallet.startsWith('0x')) {
-    return c.json({ error: 'wallet query param required (0x-prefixed Ethereum address)' }, 400);
+  if (!wallet || !/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+    return c.json({ error: 'wallet query param required (0x-prefixed 40-hex-char Ethereum address)' }, 400);
   }
 
   const nonce = issueNonce(wallet);

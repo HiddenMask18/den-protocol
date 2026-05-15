@@ -6,8 +6,10 @@
 //
 // Each check has two steps:
 //   1. Verify the participant holds the required entitlement (active subscription or purchase).
-//   2. Verify the creator has published a valid access grant for the requested tier or listing
-//      and retrieve the derivation paths it covers.
+//   2. Verify the creator has a locally-stored access grant for the requested tier or listing,
+//      re-verify its signature against the creator's current primary wallet, and retrieve the
+//      derivation paths it covers. Spec §4.1 MUST: signature verification is required before
+//      every key derivation — the on-chain verifyGrant() only checks existence, not signature.
 //
 // The gate returns the derivation paths on success. The access route uses those paths to call
 // deriveKey() once per path and return the full set of keys to the subscriber.
@@ -15,14 +17,15 @@
 // Chain errors (RPC failure, timeout) are not caught here. They propagate as thrown errors
 // and are handled by the global error handler in index.ts, which returns a 500 response.
 
-import { subscription, purchaseState, accessGrant } from '../chain/contracts.ts';
+import { subscription, purchaseState, getPrimaryWallet } from '../chain/contracts.ts';
+import { getGrant, verifyGrantSignature } from '../grants/store.ts';
 
 export type GateResult =
-  | { ok: true; paths: readonly string[] }
+  | { ok: true; paths: readonly string[]; expiry?: bigint }
   | { ok: false; reason: string };
 
 // Checks whether subscriberProxy holds an active subscription to tierId on creatorProxy,
-// and whether creatorProxy has published a valid access grant for that tier.
+// and whether creatorProxy has a locally-stored, signature-verified access grant for that tier.
 export async function checkSubscriptionAccess(
   subscriberProxy: `0x${string}`,
   creatorProxy: `0x${string}`,
@@ -33,16 +36,27 @@ export async function checkSubscriptionAccess(
     return { ok: false, reason: 'no active subscription for this tier' };
   }
 
-  const [valid, paths] = await accessGrant.read.verifyGrant([creatorProxy, tierId]);
-  if (!valid) {
-    return { ok: false, reason: 'no valid access grant published for this tier' };
+  // Read expiry for subscriber state mirroring (spec §4.2).
+  const expiry = await subscription.read.getSubscriptionExpiry([subscriberProxy, creatorProxy, tierId]);
+
+  const tierIdStr = tierId.toString();
+  const grant = getGrant(creatorProxy, tierIdStr);
+  if (!grant) {
+    return { ok: false, reason: 'no access grant declared for this tier' };
   }
 
-  return { ok: true, paths };
+  const primaryWallet = await getPrimaryWallet(creatorProxy);
+  const valid = await verifyGrantSignature(grant, primaryWallet);
+  if (!valid) {
+    return { ok: false, reason: 'access grant signature does not match creator primary wallet' };
+  }
+
+  const parsed = JSON.parse(grant.declaration) as { paths: string[] };
+  return { ok: true, paths: parsed.paths, expiry };
 }
 
 // Checks whether buyerProxy has purchased listingId from creatorProxy,
-// and whether creatorProxy has published a valid access grant for that listing.
+// and whether creatorProxy has a locally-stored, signature-verified access grant for that listing.
 export async function checkPurchaseAccess(
   buyerProxy: `0x${string}`,
   creatorProxy: `0x${string}`,
@@ -53,10 +67,18 @@ export async function checkPurchaseAccess(
     return { ok: false, reason: 'no purchase record for this listing' };
   }
 
-  const [valid, paths] = await accessGrant.read.verifyGrant([creatorProxy, listingId]);
-  if (!valid) {
-    return { ok: false, reason: 'no valid access grant published for this listing' };
+  const listingIdStr = listingId.toString();
+  const grant = getGrant(creatorProxy, listingIdStr);
+  if (!grant) {
+    return { ok: false, reason: 'no access grant declared for this listing' };
   }
 
-  return { ok: true, paths };
+  const primaryWallet = await getPrimaryWallet(creatorProxy);
+  const valid = await verifyGrantSignature(grant, primaryWallet);
+  if (!valid) {
+    return { ok: false, reason: 'access grant signature does not match creator primary wallet' };
+  }
+
+  const parsed = JSON.parse(grant.declaration) as { paths: string[] };
+  return { ok: true, paths: parsed.paths };
 }

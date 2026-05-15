@@ -1,0 +1,127 @@
+// Creator oracle client — fetches the creator's key share for the threshold split.
+//
+// Each creator operates an independent oracle that holds creator_share (one half of an XOR
+// split of the master secret). The instance holds instance_share (decrypted from the
+// operational blob). Neither half alone is sufficient to derive content keys. Key delivery
+// requires cooperation from both the instance and the creator's oracle.
+//
+// The oracle independently verifies on-chain subscription or purchase state before returning
+// creator_share. It does not trust the instance's entitlement claims — it reads the chain
+// directly. This means a compelled hoster cannot forge entitlement proofs to extract
+// creator_share: the oracle would reject a request for a subscription that doesn't exist.
+//
+// Cache: creator_share is cached in memory for 5 minutes per creator. The subscription
+// state check in gate.ts is always a live on-chain read — the cache only avoids repeated
+// oracle round-trips for the same creator during an active window. If a creator takes their
+// oracle offline, key delivery for that creator stops within one cache window (5 minutes).
+//
+// The cache is intentionally in-memory only and never persisted to SQLite. A process
+// restart clears it — one fresh oracle call per creator per boot is acceptable.
+
+import { fromHex } from 'viem';
+
+export type OracleRequest =
+  | { type: 'subscription'; subscriberProxy: string; creatorProxy: string; tierId: string }
+  | { type: 'purchase'; buyerProxy: string; creatorProxy: string; listingId: string };
+
+export class OracleError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'OracleError';
+  }
+}
+
+// 5-minute cache keyed by creatorProxy (lowercase).
+// creator_share is the same for all tiers of a creator — keying by creatorProxy is sufficient.
+type CacheEntry = { share: Uint8Array; expiresAt: number };
+const shareCache = new Map<string, CacheEntry>();
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const ORACLE_TIMEOUT_MS = 10_000;    // 10 seconds — oracle should respond quickly
+
+function getCached(creatorProxy: string): Uint8Array | null {
+  const key = creatorProxy.toLowerCase();
+  const entry = shareCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    shareCache.delete(key);
+    return null;
+  }
+  return entry.share;
+}
+
+function setCache(creatorProxy: string, share: Uint8Array): void {
+  shareCache.set(creatorProxy.toLowerCase(), {
+    share,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+}
+
+// Fetches creator_share from the creator's oracle for the given entitlement context.
+// Returns a 32-byte Uint8Array.
+// Throws OracleError if the oracle rejects the request, is unreachable, or returns
+// a malformed response.
+export async function fetchCreatorShare(
+  oracleUrl: string,
+  request: OracleRequest,
+): Promise<Uint8Array> {
+  const cached = getCached(request.creatorProxy);
+  if (cached) return cached;
+
+  let response: Response;
+  try {
+    response = await fetch(`${oracleUrl.replace(/\/$/, '')}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(ORACLE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new OracleError(
+      `oracle unreachable at ${oracleUrl}: ${(err as Error).message}`,
+    );
+  }
+
+  if (response.status === 403) {
+    throw new OracleError('oracle denied request — on-chain entitlement check failed', 403);
+  }
+  if (!response.ok) {
+    throw new OracleError(`oracle returned unexpected status ${response.status}`, response.status);
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new OracleError('oracle returned non-JSON response');
+  }
+
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    !('share' in body) ||
+    typeof (body as Record<string, unknown>).share !== 'string'
+  ) {
+    throw new OracleError('oracle response missing "share" field');
+  }
+
+  const shareHex = (body as { share: string }).share;
+  let shareBytes: Uint8Array;
+  try {
+    shareBytes = fromHex(shareHex as `0x${string}`, 'bytes');
+  } catch {
+    throw new OracleError('oracle share is not valid hex');
+  }
+
+  if (shareBytes.length !== 32) {
+    throw new OracleError(
+      `oracle share must be 32 bytes, got ${shareBytes.length}`,
+    );
+  }
+
+  setCache(request.creatorProxy, shareBytes);
+  return shareBytes;
+}

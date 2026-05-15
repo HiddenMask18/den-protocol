@@ -72,3 +72,12 @@ export async function getPrimaryWallet(proxyAddress: `0x${string}`): Promise<`0x
     functionName: 'primaryWallet',
   });
 }
+
+export async function getIsEmergencyWallet(proxyAddress: `0x${string}`, wallet: `0x${string}`): Promise<boolean> {
+  return chainClient.readContract({
+    address: proxyAddress,
+    abi: identityImplAbi,
+    functionName: 'isEmergencyWallet',
+    args: [wallet],
+  });
+}

@@ -36,6 +36,13 @@ export const identityRegistryAbi = [
     inputs: [{ name: 'wallet', type: 'address' }],
     outputs: [{ name: '', type: 'address' }],
   },
+  {
+    name: 'handleOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'proxy', type: 'address' }],
+    outputs: [{ name: '', type: 'string' }],
+  },
 ] as const;
 
 // DENSubscription: tracks which subscribers have active paid periods for which creator tiers.
@@ -131,6 +138,13 @@ export const identityImplAbi = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    name: 'isEmergencyWallet',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'wallet', type: 'address' }],
+    outputs: [{ name: '', type: 'bool' }],
   },
 ] as const;
 

@@ -39,27 +39,34 @@ export function initDb(): void {
     )
   `);
 
-  // Master secret blobs: two ECIES-encrypted copies of the creator's master secret.
+  // Master secret blobs: ECIES-encrypted copies of the creator's master secret.
   //
-  // Dual-blob model:
-  //   blob             — operational blob, encrypted to the instance-derived per-creator pubkey.
-  //                      The instance decrypts this on demand at key delivery time. Creator cannot
-  //                      decrypt it (they don't hold the instance's private key).
-  //   portability_blob — portability blob, encrypted to the creator's own wallet pubkey.
-  //                      The instance cannot decrypt this. Only the creator can, using their wallet.
-  //                      Used for migration and recovery (spec §8.1).
+  // Dual-blob model (spec §4.1):
+  //   blob                      — operational blob, encrypted to the instance-derived per-creator pubkey.
+  //                               The instance decrypts this on demand at key delivery time. Creator cannot
+  //                               decrypt it (they don't hold the instance's private key).
+  //                               NULL when only a portability blob has been stored (migration import state —
+  //                               creator must re-upload operational blob via PUT /creator/blob).
+  //   portability_blob          — portability blob, encrypted to the creator's primary wallet pubkey.
+  //                               The instance cannot decrypt this. Only the creator can, using their wallet.
+  //                               Used for migration and recovery (spec §8.1).
+  //   emergency_portability_blob — portability blob encrypted to the creator's emergency wallet pubkey.
+  //                               NULL until an emergency wallet is registered and the blob uploaded.
+  //                               Only the emergency wallet can decrypt this.
   //
-  // Both blobs are always ECIES ciphertext. Plaintext never persists in the database.
+  // All blobs are always ECIES ciphertext. Plaintext never persists in the database.
   db.run(`
     CREATE TABLE IF NOT EXISTS master_secret_blobs (
-      creator_proxy    TEXT    PRIMARY KEY,
-      blob             BLOB    NOT NULL,
-      portability_blob BLOB,
-      updated_at       INTEGER NOT NULL
+      creator_proxy              TEXT    PRIMARY KEY,
+      blob                       BLOB,
+      portability_blob           BLOB,
+      emergency_portability_blob BLOB,
+      oracle_url                 TEXT,
+      updated_at                 INTEGER NOT NULL
     )
   `);
 
-  type ColInfo = { name: string };
+  type ColInfo = { name: string; notnull: number };
 
   // Migration: add portability_blob column to existing databases.
   const blobCols = db.query<ColInfo, []>('PRAGMA table_info(master_secret_blobs)').all();
@@ -67,25 +74,69 @@ export function initDb(): void {
     db.run('ALTER TABLE master_secret_blobs ADD COLUMN portability_blob BLOB');
   }
 
+  // Migration: add emergency_portability_blob column (spec §4.1 emergency wallet support).
+  if (!blobCols.some((c) => c.name === 'emergency_portability_blob')) {
+    db.run('ALTER TABLE master_secret_blobs ADD COLUMN emergency_portability_blob BLOB');
+  }
+
+  // Migration: add oracle_url column (spec §4.1 threshold split — creator oracle URL).
+  if (!blobCols.some((c) => c.name === 'oracle_url')) {
+    db.run('ALTER TABLE master_secret_blobs ADD COLUMN oracle_url TEXT');
+  }
+
+  // Migration: make blob column nullable (needed for migration import where only the
+  // portability blob is provided; the creator re-uploads the operational blob separately).
+  // SQLite cannot alter column constraints in-place — requires table recreation.
+  const blobColInfo = blobCols.find((c) => c.name === 'blob');
+  if (blobColInfo?.notnull === 1) {
+    db.run('BEGIN');
+    try {
+      db.run(`
+        CREATE TABLE master_secret_blobs_new (
+          creator_proxy    TEXT    PRIMARY KEY,
+          blob             BLOB,
+          portability_blob BLOB,
+          updated_at       INTEGER NOT NULL
+        )
+      `);
+      db.run('INSERT INTO master_secret_blobs_new SELECT creator_proxy, blob, portability_blob, updated_at FROM master_secret_blobs');
+      db.run('DROP TABLE master_secret_blobs');
+      db.run('ALTER TABLE master_secret_blobs_new RENAME TO master_secret_blobs');
+      db.run('COMMIT');
+    } catch (err) {
+      db.run('ROLLBACK');
+      throw err;
+    }
+  }
+
   // Content: metadata and ciphertext for each piece of encrypted content hosted on this instance.
   // The fingerprint (SHA-256 hash of the ciphertext) is the stable content identifier —
   // the same fingerprint registered on-chain in DENContentRegistry.
-  // The ciphertext column stores the raw encrypted bytes; plaintext never touches the DB.
+  // ciphertext is nullable: NULL for migration references (is_reference=1) where the
+  // actual bytes live on IPFS and have not yet been retrieved by this instance.
   db.run(`
     CREATE TABLE IF NOT EXISTS content (
       fingerprint   TEXT    PRIMARY KEY,
       creator_proxy TEXT    NOT NULL,
       tier_id       TEXT    NOT NULL,
-      ciphertext    BLOB    NOT NULL,
+      ciphertext    BLOB,
       timestamp     INTEGER NOT NULL,
-      warnings      TEXT
+      warnings      TEXT,
+      is_reference  INTEGER NOT NULL DEFAULT 0
     )
   `);
 
-  // Migration: add ciphertext column to existing databases that predate this schema change.
   const contentCols = db.query<ColInfo, []>('PRAGMA table_info(content)').all();
+
+  // Migration: add ciphertext column to databases predating Phase 3.
   if (!contentCols.some((c) => c.name === 'ciphertext')) {
     db.run('ALTER TABLE content ADD COLUMN ciphertext BLOB');
+  }
+
+  // Migration: add is_reference column (Phase 4 — migration support).
+  // Existing rows are local uploads (is_reference=0).
+  if (!contentCols.some((c) => c.name === 'is_reference')) {
+    db.run('ALTER TABLE content ADD COLUMN is_reference INTEGER NOT NULL DEFAULT 0');
   }
 
   // Access grants: creator-signed declarations mapping tier IDs to key derivation paths.
@@ -100,6 +151,22 @@ export function initDb(): void {
       signature     TEXT    NOT NULL,
       version       INTEGER NOT NULL,
       PRIMARY KEY (creator_proxy, tier_id)
+    )
+  `);
+
+  // Subscriber state: local mirror of on-chain subscription state, written on every
+  // successful key delivery (spec §4.2 — instances MUST mirror subscriber state locally).
+  // Expiry is Unix seconds (uint256 on chain, fits safely in SQLite INTEGER for any
+  // plausible subscription period). Updated on every successful access request so the
+  // record reflects the subscriber's most recently observed active expiry.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS subscriber_state (
+      subscriber_proxy TEXT    NOT NULL,
+      creator_proxy    TEXT    NOT NULL,
+      tier_id          TEXT    NOT NULL,
+      expiry           INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL,
+      PRIMARY KEY (subscriber_proxy, creator_proxy, tier_id)
     )
   `);
 }

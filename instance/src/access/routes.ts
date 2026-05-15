@@ -4,11 +4,18 @@
 //
 // A subscriber or buyer who has authenticated via /auth/verify sends this request to retrieve
 // the content key(s) for a tier they are subscribed to or a listing they have purchased.
-// The instance checks on-chain entitlement, decrypts the creator's master secret blob, derives
-// the content key for each derivation path covered by the access grant, and returns them.
 //
-// The keys are ephemeral — derived on demand and never stored. The master secret is zeroed
-// from memory immediately after derivation so it does not linger in garbage-collectable memory.
+// Key delivery uses a two-party threshold split (spec §4.1):
+//   instance_share — decrypted from the operational blob using the instance-derived key
+//   creator_share  — fetched from the creator's independently-operated oracle
+//
+// Neither share alone is sufficient to derive content keys. The master secret is reconstructed
+// transiently as: master_secret = instance_share XOR creator_share. Content keys are derived
+// from master_secret, then master_secret and both shares are zeroed from memory immediately.
+//
+// The creator's oracle independently verifies on-chain entitlement before returning
+// creator_share — it does not trust this instance's claims. A compelled hoster cannot
+// forge entitlement proofs to extract creator_share from the oracle.
 //
 // Request body:
 //   { type: "subscription", creatorProxy: "0x...", tierId: "1" }
@@ -16,14 +23,14 @@
 //
 // Response:
 //   { keys: { "tier:1": "0xabc...", "tier:2": "0xdef..." } }
-//   Keys are 32-byte values encoded as 0x-prefixed hex. Multiple entries appear when the access
-//   grant covers multiple derivation paths (e.g. a tier 2 subscription that also grants tier 1).
+//   Keys are 32-byte values encoded as 0x-prefixed hex. Multiple entries appear when the
+//   access grant covers multiple derivation paths (e.g. tier 2 also grants tier 1).
 //
 // Error responses:
 //   400  malformed or missing request fields
 //   401  not authenticated (handled by requireAuth middleware before reaching this handler)
-//   403  entitlement check failed (no active subscription, no purchase, no valid access grant)
-//   503  creator has not yet uploaded their master secret blob to this instance
+//   403  entitlement check failed or oracle denied the request
+//   503  creator has not yet completed setup (no blob, no oracle URL)
 
 import { Hono } from 'hono';
 import { toHex } from 'viem';
@@ -32,6 +39,7 @@ import { getDb } from '../db/index.ts';
 import { deriveCreatorBlobKey, decryptBlob } from '../crypto/blob.ts';
 import { deriveKey } from '../crypto/derive.ts';
 import { checkSubscriptionAccess, checkPurchaseAccess } from './gate.ts';
+import { fetchCreatorShare, OracleError } from '../oracle/client.ts';
 
 // Declares the context variables set by requireAuth middleware so TypeScript knows their types.
 type SessionEnv = {
@@ -77,11 +85,10 @@ accessRoutes.post('/key', requireAuth, async (c) => {
 
   // The authenticated participant's proxy — resolved from their wallet at login time.
   // This is the stable DEN identity used for all on-chain lookups.
-  // proxy is stored as a lowercase 0x-prefixed address by the auth middleware
   const participantProxy = c.get('proxy') as `0x${string}`;
   const creator = creatorProxy as `0x${string}`;
 
-  // Check on-chain entitlement and retrieve the access grant derivation paths
+  // Check on-chain entitlement and verify the access grant signature (spec §4.1 MUST).
   let gateResult;
   try {
     if (type === 'subscription') {
@@ -97,40 +104,111 @@ accessRoutes.post('/key', requireAuth, async (c) => {
     return c.json({ error: gateResult.reason }, 403);
   }
 
-  // Retrieve the creator's encrypted master secret blob
-  type BlobRow = { blob: Uint8Array };
+  // Retrieve the operational blob and oracle URL.
+  // blob is nullable: NULL after a migration import before the creator re-uploads.
+  // oracle_url is nullable: NULL for creators who haven't completed setup.
+  type BlobRow = { blob: Uint8Array | null; oracle_url: string | null };
   const row = getDb()
-    .query<BlobRow, [string]>('SELECT blob FROM master_secret_blobs WHERE creator_proxy = ?')
+    .query<BlobRow, [string]>(
+      'SELECT blob, oracle_url FROM master_secret_blobs WHERE creator_proxy = ?',
+    )
     .get(creator.toLowerCase());
 
-  if (!row) {
+  if (!row || !row.blob) {
     return c.json(
-      { error: 'creator master secret not available on this instance — creator has not completed setup' },
+      { error: 'creator operational blob not available — creator has not completed setup' },
+      503,
+    );
+  }
+  if (!row.oracle_url) {
+    return c.json(
+      { error: 'creator oracle URL not configured — creator has not completed setup' },
       503,
     );
   }
 
-  // Decrypt blob → plaintext master secret
-  let masterSecret: Uint8Array;
-  try {
-    const { privKey } = deriveCreatorBlobKey(creator);
-    masterSecret = await decryptBlob(row.blob, privKey);
-  } catch {
-    return c.json({ error: 'failed to decrypt master secret blob' }, 500);
-  }
+  // Threshold key reconstruction:
+  //   1. Decrypt operational blob → instance_share (32 bytes)
+  //   2. Fetch creator_share from creator's oracle (oracle independently verifies entitlement)
+  //   3. master_secret = instance_share XOR creator_share  (reconstructed transiently)
+  //   4. Derive content keys from master_secret
+  //   5. Zero all intermediate key material immediately
 
-  // Derive one content key per path covered by the access grant.
-  // Multiple paths appear when a tier grants access to lower tiers (superset model).
-  const keys: Record<string, string> = {};
+  let instanceShare: Uint8Array | undefined;
+  let creatorShare: Uint8Array | undefined;
+  let masterSecret: Uint8Array | undefined;
+
   try {
+    // Step 1: decrypt operational blob → instance_share
+    try {
+      const { privKey } = deriveCreatorBlobKey(creator);
+      instanceShare = await decryptBlob(row.blob, privKey);
+    } catch {
+      return c.json({ error: 'failed to decrypt operational blob' }, 500);
+    }
+
+    // Step 2: fetch creator_share from oracle
+    const oracleRequest =
+      type === 'subscription'
+        ? ({
+            type: 'subscription' as const,
+            subscriberProxy: participantProxy,
+            creatorProxy: creator,
+            tierId: body.tierId!,
+          })
+        : ({
+            type: 'purchase' as const,
+            buyerProxy: participantProxy,
+            creatorProxy: creator,
+            listingId: body.listingId!,
+          });
+
+    try {
+      creatorShare = await fetchCreatorShare(row.oracle_url, oracleRequest);
+    } catch (err) {
+      if (err instanceof OracleError && err.status === 403) {
+        return c.json({ error: 'oracle denied request — entitlement not confirmed' }, 403);
+      }
+      return c.json(
+        { error: `creator oracle unavailable: ${(err as Error).message}` },
+        503,
+      );
+    }
+
+    // Step 3: reconstruct master_secret = instance_share XOR creator_share
+    masterSecret = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      masterSecret[i] = instanceShare[i] ^ creatorShare[i];
+    }
+
+    // Step 4: derive one content key per path covered by the access grant.
+    const keys: Record<string, string> = {};
     for (const path of gateResult.paths) {
       keys[path] = toHex(deriveKey(masterSecret, path));
     }
-  } finally {
-    // Zero out the plaintext master secret immediately — do not leave it in GC-able memory.
-    // The finally block ensures this runs even if deriveKey throws.
-    masterSecret.fill(0);
-  }
 
-  return c.json({ keys });
+    // Step 5: mirror subscription state locally (spec §4.2).
+    if (type === 'subscription' && gateResult.expiry !== undefined) {
+      getDb().run(
+        `INSERT OR REPLACE INTO subscriber_state
+           (subscriber_proxy, creator_proxy, tier_id, expiry, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          participantProxy.toLowerCase(),
+          creator.toLowerCase(),
+          body.tierId!,
+          Number(gateResult.expiry),
+          Date.now(),
+        ],
+      );
+    }
+
+    return c.json({ keys });
+  } finally {
+    // Zero all intermediate key material regardless of success or failure.
+    // The finally block runs even if a return statement is hit inside the try block.
+    instanceShare?.fill(0);
+    creatorShare?.fill(0);
+    masterSecret?.fill(0);
+  }
 });
