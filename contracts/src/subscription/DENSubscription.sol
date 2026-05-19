@@ -5,6 +5,7 @@ import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENSubscription.sol";
 import "../interfaces/IDENContentRegistry.sol";
+import "../interfaces/IERC20.sol";
 
 contract DENSubscription is IDENSubscription {
 
@@ -12,8 +13,9 @@ contract DENSubscription is IDENSubscription {
     address private _contentRegistry;
 
     struct Tier {
-        uint256 price;      // in wei
+        uint256 price;      // token units (wei for ETH, smallest denomination for ERC-20)
         uint256 duration;   // in seconds
+        address token;      // address(0) = native ETH; any other address = ERC-20
         bool exists;
     }
 
@@ -23,12 +25,12 @@ contract DENSubscription is IDENSubscription {
     // subscriberProxy => creatorProxy => tierId => expiry timestamp
     mapping(address => mapping(address => mapping(uint256 => uint256))) private _subscriptions;
 
-    // creatorProxy => claimable escrow balance
-    mapping(address => uint256) private _escrow;
+    // creatorProxy => token => claimable escrow balance
+    mapping(address => mapping(address => uint256)) private _escrow;
 
-    event TierSet(address indexed creatorProxy, uint256 indexed tierId, uint256 price, uint256 duration);
+    event TierSet(address indexed creatorProxy, uint256 indexed tierId, uint256 price, uint256 duration, address indexed token);
     event Subscribed(address indexed subscriberProxy, address indexed creatorProxy, uint256 indexed tierId, uint256 expiry);
-    event Withdrawn(address indexed creatorProxy, uint256 amount);
+    event Withdrawn(address indexed creatorProxy, address indexed token, uint256 amount);
 
     constructor(address identityContractAddress) {
         _identity = IDENIdentity(identityContractAddress);
@@ -43,19 +45,21 @@ contract DENSubscription is IDENSubscription {
 
     // Creator calls from their wallet; proxy is resolved internally and used as the stable key.
     // Caller must be the current primary wallet of their proxy.
-    function setTier(uint256 tierId, uint256 price, uint256 duration) external {
+    // token = address(0) for native ETH; any ERC-20 contract address otherwise.
+    function setTier(uint256 tierId, uint256 price, uint256 duration, address token) external {
         address proxy = _identity.getProxy(msg.sender);
         require(proxy != address(0), "Not registered");
         require(IDENParticipantIdentity(proxy).primaryWallet() == msg.sender, "Not primary wallet");
         require(price > 0, "Price must be nonzero");
         require(duration > 0, "Duration must be nonzero");
-        _tiers[proxy][tierId] = Tier(price, duration, true);
-        emit TierSet(proxy, tierId, price, duration);
+        _tiers[proxy][tierId] = Tier(price, duration, token, true);
+        emit TierSet(proxy, tierId, price, duration, token);
     }
 
-    // Subscriber calls from their wallet. creatorProxy must be a valid registered proxy address
-    // (obtained via IDENIdentity.getProxy or IDENIdentity.resolve off-chain before calling).
+    // Subscriber calls from their wallet. creatorProxy must be a valid registered proxy address.
     // Reverts if the creator has an active sunset notice (spec §5.6: no new subscriptions after sunset).
+    // For ETH tiers: send msg.value == tier.price.
+    // For ERC-20 tiers: approve this contract first, then call with msg.value == 0.
     function subscribe(address creatorProxy, uint256 tierId) external payable {
         address subscriberProxy = _identity.getProxy(msg.sender);
         require(subscriberProxy != address(0), "Subscriber not registered");
@@ -70,7 +74,16 @@ contract DENSubscription is IDENSubscription {
 
         Tier memory tier = _tiers[creatorProxy][tierId];
         require(tier.exists, "Tier does not exist");
-        require(msg.value == tier.price, "Incorrect payment amount");
+
+        if (tier.token == address(0)) {
+            require(msg.value == tier.price, "Incorrect payment amount");
+            _escrow[creatorProxy][address(0)] += msg.value;
+        } else {
+            require(msg.value == 0, "Do not send ETH for token payment");
+            bool ok = IERC20(tier.token).transferFrom(msg.sender, address(this), tier.price);
+            require(ok, "Token transfer failed");
+            _escrow[creatorProxy][tier.token] += tier.price;
+        }
 
         uint256 start = block.timestamp;
         uint256 currentExpiry = _subscriptions[subscriberProxy][creatorProxy][tierId];
@@ -80,7 +93,6 @@ contract DENSubscription is IDENSubscription {
 
         uint256 expiry = start + tier.duration;
         _subscriptions[subscriberProxy][creatorProxy][tierId] = expiry;
-        _escrow[creatorProxy] += msg.value;
 
         emit Subscribed(subscriberProxy, creatorProxy, tierId, expiry);
     }
@@ -105,20 +117,30 @@ contract DENSubscription is IDENSubscription {
         return _tiers[creatorProxy][tierId].duration;
     }
 
-    // Creator calls from their current wallet. Proxy is resolved internally, so this works
-    // transparently after a wallet rotation + syncWallet() — escrow key is unchanged.
-    function withdraw() external {
-        address proxy = _identity.getProxy(msg.sender);
-        require(proxy != address(0), "Not registered");
-        uint256 amount = _escrow[proxy];
-        require(amount > 0, "Nothing to withdraw");
-        _escrow[proxy] = 0;
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "Transfer failed");
-        emit Withdrawn(proxy, amount);
+    function getTierToken(address creatorProxy, uint256 tierId) external view returns (address) {
+        return _tiers[creatorProxy][tierId].token;
     }
 
-    function getEscrowBalance(address creatorProxy) external view returns (uint256) {
-        return _escrow[creatorProxy];
+    // Creator calls from their current wallet. Proxy is resolved internally, so this works
+    // transparently after wallet rotation — escrow key is unchanged.
+    // token = address(0) to withdraw ETH escrow; ERC-20 address to withdraw token escrow.
+    function withdraw(address token) external {
+        address proxy = _identity.getProxy(msg.sender);
+        require(proxy != address(0), "Not registered");
+        uint256 amount = _escrow[proxy][token];
+        require(amount > 0, "Nothing to withdraw");
+        _escrow[proxy][token] = 0;
+        if (token == address(0)) {
+            (bool success, ) = msg.sender.call{value: amount}("");
+            require(success, "Transfer failed");
+        } else {
+            bool ok = IERC20(token).transfer(msg.sender, amount);
+            require(ok, "Token transfer failed");
+        }
+        emit Withdrawn(proxy, token, amount);
+    }
+
+    function getEscrowBalance(address creatorProxy, address token) external view returns (uint256) {
+        return _escrow[creatorProxy][token];
     }
 }

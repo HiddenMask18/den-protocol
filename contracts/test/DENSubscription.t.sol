@@ -7,11 +7,13 @@ import "../src/identity/DENIdentityRegistry.sol";
 import "../src/interfaces/IDENParticipantIdentity.sol";
 import "../src/subscription/DENSubscription.sol";
 import "../src/content/DENContentRegistry.sol";
+import "./mocks/MockERC20.sol";
 
 contract DENSubscriptionTest is Test {
     DENIdentityImpl impl;
     DENIdentityRegistry registry;
     DENSubscription subscription;
+    MockERC20 token;
 
     uint256 aliceKey;
     address alice;
@@ -34,6 +36,7 @@ contract DENSubscriptionTest is Test {
         impl = new DENIdentityImpl();
         registry = new DENIdentityRegistry(address(impl));
         subscription = new DENSubscription(address(registry));
+        token = new MockERC20();
 
         vm.prank(alice);
         registry.register();
@@ -43,8 +46,9 @@ contract DENSubscriptionTest is Test {
         registry.register();
         bobProxy = registry.getProxy(bob);
 
+        // ETH tier set up by default; individual tests add ERC-20 tiers as needed.
         vm.prank(alice);
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
         vm.deal(bob, 10 ether);
     }
@@ -54,22 +58,22 @@ contract DENSubscriptionTest is Test {
     function test_UnregisteredCannotSetTier() public {
         vm.prank(carol);
         vm.expectRevert("Not registered");
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
     }
 
     function test_TierPriceMustBeNonzero() public {
         vm.prank(alice);
         vm.expectRevert("Price must be nonzero");
-        subscription.setTier(2, 0, DURATION);
+        subscription.setTier(2, 0, DURATION, address(0));
     }
 
     function test_TierDurationMustBeNonzero() public {
         vm.prank(alice);
         vm.expectRevert("Duration must be nonzero");
-        subscription.setTier(2, PRICE, 0);
+        subscription.setTier(2, PRICE, 0, address(0));
     }
 
-    // --- subscribe ---
+    // --- subscribe (ETH) ---
 
     function test_SubscribeSucceeds() public {
         vm.prank(bob);
@@ -100,6 +104,60 @@ contract DENSubscriptionTest is Test {
         vm.prank(bob);
         vm.expectRevert("Incorrect payment amount");
         subscription.subscribe{value: 0.5 ether}(aliceProxy, TIER_ID);
+    }
+
+    // --- subscribe (ERC-20) ---
+
+    function test_ERC20SubscribeSucceeds() public {
+        uint256 tokenTierId = 2;
+        vm.prank(alice);
+        subscription.setTier(tokenTierId, PRICE, DURATION, address(token));
+
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(subscription), PRICE);
+
+        vm.prank(bob);
+        subscription.subscribe(aliceProxy, tokenTierId);
+
+        assertTrue(subscription.isSubscribed(bobProxy, aliceProxy, tokenTierId));
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(token)), PRICE);
+        assertEq(token.balanceOf(bob), 0);
+        assertEq(token.balanceOf(address(subscription)), PRICE);
+    }
+
+    function test_ERC20SubscribeRevertsIfEthSent() public {
+        uint256 tokenTierId = 2;
+        vm.prank(alice);
+        subscription.setTier(tokenTierId, PRICE, DURATION, address(token));
+
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(subscription), PRICE);
+
+        vm.prank(bob);
+        vm.expectRevert("Do not send ETH for token payment");
+        subscription.subscribe{value: 1}(aliceProxy, tokenTierId);
+    }
+
+    function test_ERC20SubscribeRevertsWithoutApproval() public {
+        uint256 tokenTierId = 2;
+        vm.prank(alice);
+        subscription.setTier(tokenTierId, PRICE, DURATION, address(token));
+
+        token.mint(bob, PRICE);
+        // No approve call
+
+        vm.prank(bob);
+        vm.expectRevert("Allowance exceeded");
+        subscription.subscribe(aliceProxy, tokenTierId);
+    }
+
+    function test_EthTierRevertsIfNoEthSent() public {
+        // ETH tier but subscriber sends nothing
+        vm.prank(bob);
+        vm.expectRevert("Incorrect payment amount");
+        subscription.subscribe(aliceProxy, TIER_ID);
     }
 
     // --- expiry and access ---
@@ -168,7 +226,7 @@ contract DENSubscriptionTest is Test {
     function test_EscrowAccumulatesOnSubscription() public {
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
-        assertEq(subscription.getEscrowBalance(aliceProxy), PRICE);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(0)), PRICE);
     }
 
     function test_EscrowAccumulatesAcrossMultipleSubscriptions() public {
@@ -183,25 +241,71 @@ contract DENSubscriptionTest is Test {
         vm.prank(dave);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
 
-        assertEq(subscription.getEscrowBalance(aliceProxy), PRICE * 2);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(0)), PRICE * 2);
     }
 
-    function test_CreatorCanWithdrawEscrow() public {
+    function test_CreatorCanWithdrawEthEscrow() public {
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
 
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        subscription.withdraw();
+        subscription.withdraw(address(0));
 
         assertEq(alice.balance, balanceBefore + PRICE);
-        assertEq(subscription.getEscrowBalance(aliceProxy), 0);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(0)), 0);
+    }
+
+    function test_CreatorCanWithdrawTokenEscrow() public {
+        uint256 tokenTierId = 2;
+        vm.prank(alice);
+        subscription.setTier(tokenTierId, PRICE, DURATION, address(token));
+
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(subscription), PRICE);
+        vm.prank(bob);
+        subscription.subscribe(aliceProxy, tokenTierId);
+
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(token)), PRICE);
+
+        vm.prank(alice);
+        subscription.withdraw(address(token));
+
+        assertEq(token.balanceOf(alice), PRICE);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(token)), 0);
+    }
+
+    function test_EthAndTokenEscrowAreIndependent() public {
+        uint256 tokenTierId = 2;
+        vm.prank(alice);
+        subscription.setTier(tokenTierId, PRICE, DURATION, address(token));
+
+        // Bob subscribes with ETH
+        vm.prank(bob);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+
+        // Bob also subscribes with token
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(subscription), PRICE);
+        vm.prank(bob);
+        subscription.subscribe(aliceProxy, tokenTierId);
+
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(0)), PRICE);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(token)), PRICE);
+
+        // Withdraw token doesn't touch ETH escrow
+        vm.prank(alice);
+        subscription.withdraw(address(token));
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(0)), PRICE);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(token)), 0);
     }
 
     function test_WithdrawWithNothingReverts() public {
         vm.prank(alice);
         vm.expectRevert("Nothing to withdraw");
-        subscription.withdraw();
+        subscription.withdraw(address(0));
     }
 
     function test_CannotWithdrawOthersEscrow() public {
@@ -210,13 +314,26 @@ contract DENSubscriptionTest is Test {
 
         vm.prank(bob);
         vm.expectRevert("Nothing to withdraw");
-        subscription.withdraw();
+        subscription.withdraw(address(0));
     }
 
     function test_UnregisteredCannotWithdraw() public {
         vm.prank(carol);
         vm.expectRevert("Not registered");
-        subscription.withdraw();
+        subscription.withdraw(address(0));
+    }
+
+    // --- getTierToken ---
+
+    function test_GetTierTokenReturnsAddressZeroForEth() public view {
+        assertEq(subscription.getTierToken(aliceProxy, TIER_ID), address(0));
+    }
+
+    function test_GetTierTokenReturnsTokenAddress() public {
+        uint256 tokenTierId = 2;
+        vm.prank(alice);
+        subscription.setTier(tokenTierId, PRICE, DURATION, address(token));
+        assertEq(subscription.getTierToken(aliceProxy, tokenTierId), address(token));
     }
 
     // --- events ---
@@ -231,7 +348,6 @@ contract DENSubscriptionTest is Test {
 
     // --- wallet rotation survival ---
 
-    // Helper: perform a clean rotation for a proxy from oldKey to newWallet.
     function _rotateWallet(address proxy, uint256 oldKey, address newWallet, uint256 newKey) internal {
         uint256 nonce = IDENParticipantIdentity(proxy).rotationNonce();
         bytes32 structHash = keccak256(abi.encode("DEN-clean-rotation", proxy, nonce));
@@ -245,25 +361,21 @@ contract DENSubscriptionTest is Test {
         vm.prank(newWallet);
         registry.syncWallet(proxy);
 
-        (oldKey); // silence unused variable warning
+        (oldKey);
     }
 
     function test_SubscriptionSurvivesCreatorWalletRotation() public {
-        // Bob subscribes to alice before rotation
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
         assertTrue(subscription.isSubscribed(bobProxy, aliceProxy, TIER_ID));
 
-        // Alice rotates to alice2
         (address alice2, uint256 alice2Key) = makeAddrAndKey("alice2");
         _rotateWallet(aliceProxy, aliceKey, alice2, alice2Key);
 
-        // Registry now points alice2 → aliceProxy; alice is deregistered
         assertFalse(registry.isRegistered(alice));
         assertTrue(registry.isRegistered(alice2));
         assertEq(registry.getProxy(alice2), aliceProxy);
 
-        // Subscription is keyed by aliceProxy — unchanged by the rotation
         assertTrue(subscription.isSubscribed(bobProxy, aliceProxy, TIER_ID));
     }
 
@@ -274,24 +386,20 @@ contract DENSubscriptionTest is Test {
         (address alice2, uint256 alice2Key) = makeAddrAndKey("alice2");
         _rotateWallet(aliceProxy, aliceKey, alice2, alice2Key);
 
-        // alice2 can withdraw the escrow that accumulated under aliceProxy
         uint256 balanceBefore = alice2.balance;
         vm.prank(alice2);
-        subscription.withdraw();
+        subscription.withdraw(address(0));
 
         assertEq(alice2.balance, balanceBefore + PRICE);
-        assertEq(subscription.getEscrowBalance(aliceProxy), 0);
+        assertEq(subscription.getEscrowBalance(aliceProxy, address(0)), 0);
     }
 
     // --- sunset gate ---
 
-    // No new subscriptions after the creator has an active sunset notice (spec §5.6).
     function test_SubscribeBlockedAfterSunset() public {
-        // Deploy content registry and wire it to the subscription contract.
         DENContentRegistry cr = new DENContentRegistry(address(registry), address(subscription));
         subscription.setContentRegistry(address(cr));
 
-        // Register an operator and have alice designate it.
         address op = makeAddr("op");
         vm.prank(op);
         registry.register();
@@ -299,7 +407,6 @@ contract DENSubscriptionTest is Test {
         vm.prank(alice);
         cr.setContentOperator(opProxy);
 
-        // Register a content fingerprint so the operator can issue a sunset notice.
         bytes32 fp = keccak256("test-content");
         vm.prank(alice);
         cr.registerContent(fp, TIER_ID);
@@ -307,7 +414,6 @@ contract DENSubscriptionTest is Test {
         vm.prank(op);
         cr.issueSunsetNotice(fp);
 
-        // Bob cannot subscribe while sunset is active.
         vm.prank(bob);
         vm.expectRevert("Creator has active sunset notice");
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
@@ -318,7 +424,6 @@ contract DENSubscriptionTest is Test {
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
         assertTrue(subscription.isSubscribed(bobProxy, aliceProxy, TIER_ID));
 
-        // Bob rotates to bob2
         (address bob2, uint256 bob2Key) = makeAddrAndKey("bob2");
         _rotateWallet(bobProxy, bobKey, bob2, bob2Key);
 
@@ -326,8 +431,6 @@ contract DENSubscriptionTest is Test {
         assertTrue(registry.isRegistered(bob2));
         assertEq(registry.getProxy(bob2), bobProxy);
 
-        // Subscription is keyed by bobProxy — unchanged by the rotation.
-        // Instance would call: getProxy(bob2) → bobProxy → isSubscribed(bobProxy, aliceProxy, tierId)
         assertTrue(subscription.isSubscribed(bobProxy, aliceProxy, TIER_ID));
     }
 }

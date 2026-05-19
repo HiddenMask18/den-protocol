@@ -220,6 +220,32 @@ creatorRoutes.get('/portability-blob', requireAuth, async (c) => {
 
 // ─── Content ──────────────────────────────────────────────────────────────────
 
+// Deletes a single content entry owned by the authenticated creator.
+// Used to clean up orphaned old ciphertext rows after key rotation (spec §4.7):
+// after re-encrypting all content for a tier and uploading new ciphertext (new fingerprints),
+// the creator deletes the old rows so they do not appear in GET /creator/content listings.
+//
+// Returns 404 if the fingerprint is not found or does not belong to this creator.
+// The caller is responsible for ensuring on-chain rotation is complete before calling this —
+// the instance has no visibility into whether a given fingerprint is still active on-chain.
+creatorRoutes.delete('/content/:fingerprint', requireAuth, (c) => {
+  const proxy = c.get('proxy');
+  const { fingerprint } = c.req.param();
+
+  const row = getDb()
+    .query<{ fingerprint: string }, [string, string]>(
+      'SELECT fingerprint FROM content WHERE fingerprint = ? AND creator_proxy = ?',
+    )
+    .get(fingerprint, proxy);
+
+  if (!row) {
+    return c.json({ error: 'content not found' }, 404);
+  }
+
+  getDb().run('DELETE FROM content WHERE fingerprint = ? AND creator_proxy = ?', [fingerprint, proxy]);
+  return new Response(null, { status: 204 });
+});
+
 creatorRoutes.post('/content', requireAuth, async (c) => {
   const tierIdHeader = c.req.header('X-Tier-Id');
   if (!tierIdHeader) {

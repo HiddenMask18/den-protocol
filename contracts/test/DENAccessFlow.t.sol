@@ -88,7 +88,7 @@ contract DENAccessFlowTest is Test {
     function test_FullAccessCheckFlow() public {
         // --- Creator setup ---
         vm.prank(alice);
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
         string[] memory paths = new string[](1);
         paths[0] = "tier:1";
@@ -123,7 +123,7 @@ contract DENAccessFlowTest is Test {
     // The same access check must pass after creator wallet rotation.
     function test_AccessCheckSurvivesCreatorWalletRotation() public {
         vm.prank(alice);
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
         string[] memory paths = new string[](1);
         paths[0] = "tier:1";
@@ -155,7 +155,7 @@ contract DENAccessFlowTest is Test {
         // Creator's new wallet can also withdraw escrow
         uint256 balanceBefore = alice2.balance;
         vm.prank(alice2);
-        subscription.withdraw();
+        subscription.withdraw(address(0));
         assertEq(alice2.balance, balanceBefore + PRICE);
 
         (alice2Key); // silence unused variable warning
@@ -164,7 +164,7 @@ contract DENAccessFlowTest is Test {
     // Access is denied once a subscription lapses.
     function test_AccessDeniedAfterSubscriptionLapse() public {
         vm.prank(alice);
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
         string[] memory paths = new string[](1);
         paths[0] = "tier:1";
@@ -193,7 +193,7 @@ contract DENAccessFlowTest is Test {
     // Access is denied once the creator revokes the access grant.
     function test_AccessDeniedAfterGrantRevocation() public {
         vm.prank(alice);
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
         string[] memory paths = new string[](1);
         paths[0] = "tier:1";

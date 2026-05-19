@@ -23,10 +23,10 @@ The `.env` file needs contract addresses. For local development, deploy the cont
 
 ```bash
 # From the repo root — start a local Ethereum node
-cd ../contracts && anvil
+anvil
 
-# In a second terminal — deploy the contracts (deployment scripts TBD)
-forge script ... --rpc-url http://localhost:8545 --broadcast
+# In a second terminal — deploy the contracts
+cd contracts && forge script script/Deploy.s.sol --rpc-url http://localhost:8545 --broadcast
 ```
 
 Then paste the deployed addresses into `.env`.
@@ -130,6 +130,34 @@ GET /creator/grant/:tierId
 
 The signature must be the creator's EIP-191 signature over `keccak256(abi.encode("DEN-access-grant", proxy, tierId, pathsHash, version))`. Version must be `1` for new grants or `existing.version + 1` for updates.
 
+**Portable data set export / import**
+
+Exports everything needed to migrate to another instance or restore from backup. The export bundle is a JSON object containing the portability blob, all content records, and all grants.
+
+```
+GET /creator/export
+→ {
+    portabilityBlob: "0x...",
+    content: [{ fingerprint, tierId, warnings, timestamp }],
+    grants:  [{ tierId, paths, version, signature }]
+  }
+
+POST /creator/import
+Body: { portabilityBlob: "0x...", content: [...], grants: [...] }
+→ { imported: { content: N, grants: N } }
+```
+
+`portabilityBlob` is the creator-encrypted master secret blob (only the creator's wallet can decrypt it). Import is idempotent — duplicate fingerprints and tier IDs are skipped.
+
+**Content deletion**
+
+Remove a content record from the instance (e.g. after key rotation replaces a ciphertext):
+
+```
+DELETE /creator/content/:fingerprint
+→ 204 No Content
+```
+
 ---
 
 ### Content download (subscriber/buyer)
@@ -200,7 +228,7 @@ src/
 | Content upload/download | Done |
 | Creator content management API | Done |
 | Access grant local publication | Done |
-| Migration support (portable data set export/import) | Planned |
-| Key rotation (tier-by-tier re-encryption) | Planned |
+| Migration support (portable data set export/import) | Done |
+| Key rotation (tier-by-tier re-encryption) | Done |
 | Hoster compensation | Planned (needs on-chain contracts) |
 | Moderation layer | Planned (needs on-chain contracts) |

@@ -51,7 +51,7 @@ contract DENContentRegistryTest is Test {
 
         // Alice registers her tier so sunset notice duration lookups work correctly.
         vm.prank(alice);
-        subscription.setTier(TIER_ID, PRICE, DURATION);
+        subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
         // Alice designates instanceOp as the authorized sunset operator (spec §7.5).
         vm.prank(alice);

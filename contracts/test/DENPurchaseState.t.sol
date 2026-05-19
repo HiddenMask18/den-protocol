@@ -8,11 +8,13 @@ import "../src/interfaces/IDENParticipantIdentity.sol";
 import "../src/purchase/DENPurchaseState.sol";
 import "../src/content/DENContentRegistry.sol";
 import "../src/subscription/DENSubscription.sol";
+import "./mocks/MockERC20.sol";
 
 contract DENPurchaseStateTest is Test {
     DENIdentityImpl impl;
     DENIdentityRegistry registry;
     DENPurchaseState purchaseState;
+    MockERC20 token;
 
     uint256 aliceKey;
     address alice;
@@ -34,6 +36,7 @@ contract DENPurchaseStateTest is Test {
         impl = new DENIdentityImpl();
         registry = new DENIdentityRegistry(address(impl));
         purchaseState = new DENPurchaseState(address(registry));
+        token = new MockERC20();
 
         vm.prank(alice);
         registry.register();
@@ -43,8 +46,9 @@ contract DENPurchaseStateTest is Test {
         registry.register();
         bobProxy = registry.getProxy(bob);
 
+        // ETH listing set up by default.
         vm.prank(alice);
-        purchaseState.setListing(LISTING_ID, PRICE);
+        purchaseState.setListing(LISTING_ID, PRICE, address(0));
 
         vm.deal(bob, 10 ether);
     }
@@ -54,12 +58,10 @@ contract DENPurchaseStateTest is Test {
     function test_UnregisteredCannotSetListing() public {
         vm.prank(carol);
         vm.expectRevert("Not registered");
-        purchaseState.setListing(LISTING_ID, PRICE);
+        purchaseState.setListing(LISTING_ID, PRICE, address(0));
     }
 
     function test_NonPrimaryWalletCannotSetListing() public {
-        // Rotate the identity contract but do NOT call syncWallet — old registry mapping stays,
-        // but the proxy's primaryWallet is already alice2. alice hits "Not primary wallet".
         (address alice2, uint256 alice2Key) = makeAddrAndKey("alice2");
         uint256 nonce = IDENParticipantIdentity(aliceProxy).rotationNonce();
         bytes32 structHash = keccak256(abi.encode("DEN-clean-rotation", aliceProxy, nonce));
@@ -70,27 +72,37 @@ contract DENPurchaseStateTest is Test {
 
         vm.prank(alice);
         vm.expectRevert("Not primary wallet");
-        purchaseState.setListing(2, PRICE);
+        purchaseState.setListing(2, PRICE, address(0));
     }
 
     function test_ListingPriceMustBeNonzero() public {
         vm.prank(alice);
         vm.expectRevert("Price must be nonzero");
-        purchaseState.setListing(2, 0);
+        purchaseState.setListing(2, 0, address(0));
     }
 
     function test_SetListingSucceeds() public {
         vm.prank(alice);
-        purchaseState.setListing(2, 0.5 ether);
-        (uint256 price, bool exists) = purchaseState.getListing(aliceProxy, 2);
+        purchaseState.setListing(2, 0.5 ether, address(0));
+        (uint256 price, address tok, bool exists) = purchaseState.getListing(aliceProxy, 2);
         assertEq(price, 0.5 ether);
+        assertEq(tok, address(0));
+        assertTrue(exists);
+    }
+
+    function test_SetListingWithTokenSucceeds() public {
+        vm.prank(alice);
+        purchaseState.setListing(2, PRICE, address(token));
+        (uint256 price, address tok, bool exists) = purchaseState.getListing(aliceProxy, 2);
+        assertEq(price, PRICE);
+        assertEq(tok, address(token));
         assertTrue(exists);
     }
 
     function test_CreatorCanUpdateListingPrice() public {
         vm.prank(alice);
-        purchaseState.setListing(LISTING_ID, 2 ether);
-        (uint256 price, bool exists) = purchaseState.getListing(aliceProxy, LISTING_ID);
+        purchaseState.setListing(LISTING_ID, 2 ether, address(0));
+        (uint256 price, , bool exists) = purchaseState.getListing(aliceProxy, LISTING_ID);
         assertEq(price, 2 ether);
         assertTrue(exists);
     }
@@ -100,30 +112,31 @@ contract DENPurchaseStateTest is Test {
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
 
         vm.prank(alice);
-        purchaseState.setListing(LISTING_ID, 2 ether);
+        purchaseState.setListing(LISTING_ID, 2 ether, address(0));
 
         assertTrue(purchaseState.hasPurchased(bobProxy, aliceProxy, LISTING_ID));
     }
 
     function test_EmitsListingSetEvent() public {
         vm.prank(alice);
-        vm.expectEmit(true, true, false, true);
-        emit DENPurchaseState.ListingSet(aliceProxy, 2, 0.5 ether);
-        purchaseState.setListing(2, 0.5 ether);
+        vm.expectEmit(true, true, true, true);
+        emit DENPurchaseState.ListingSet(aliceProxy, 2, 0.5 ether, address(0));
+        purchaseState.setListing(2, 0.5 ether, address(0));
     }
 
     function test_GetListingReturnsCorrectValues() public view {
-        (uint256 price, bool exists) = purchaseState.getListing(aliceProxy, LISTING_ID);
+        (uint256 price, address tok, bool exists) = purchaseState.getListing(aliceProxy, LISTING_ID);
         assertEq(price, PRICE);
+        assertEq(tok, address(0));
         assertTrue(exists);
     }
 
     function test_GetListingReturnsFalseForUnsetListing() public view {
-        (, bool exists) = purchaseState.getListing(aliceProxy, 99);
+        (, , bool exists) = purchaseState.getListing(aliceProxy, 99);
         assertFalse(exists);
     }
 
-    // --- purchase ---
+    // --- purchase (ETH) ---
 
     function test_PurchaseSucceeds() public {
         vm.prank(bob);
@@ -191,12 +204,75 @@ contract DENPurchaseStateTest is Test {
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
     }
 
+    // --- purchase (ERC-20) ---
+
+    function test_ERC20PurchaseSucceeds() public {
+        uint256 tokenListingId = 2;
+        vm.prank(alice);
+        purchaseState.setListing(tokenListingId, PRICE, address(token));
+
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(purchaseState), PRICE);
+
+        vm.prank(bob);
+        purchaseState.purchase(aliceProxy, tokenListingId);
+
+        assertTrue(purchaseState.hasPurchased(bobProxy, aliceProxy, tokenListingId));
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(token)), PRICE);
+        assertEq(token.balanceOf(bob), 0);
+        assertEq(token.balanceOf(address(purchaseState)), PRICE);
+    }
+
+    function test_ERC20PurchaseRevertsIfEthSent() public {
+        uint256 tokenListingId = 2;
+        vm.prank(alice);
+        purchaseState.setListing(tokenListingId, PRICE, address(token));
+
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(purchaseState), PRICE);
+
+        vm.prank(bob);
+        vm.expectRevert("Do not send ETH for token payment");
+        purchaseState.purchase{value: 1}(aliceProxy, tokenListingId);
+    }
+
+    function test_ERC20PurchaseRevertsWithoutApproval() public {
+        uint256 tokenListingId = 2;
+        vm.prank(alice);
+        purchaseState.setListing(tokenListingId, PRICE, address(token));
+
+        token.mint(bob, PRICE);
+
+        vm.prank(bob);
+        vm.expectRevert("Allowance exceeded");
+        purchaseState.purchase(aliceProxy, tokenListingId);
+    }
+
+    function test_ERC20DuplicatePurchaseReverts() public {
+        uint256 tokenListingId = 2;
+        vm.prank(alice);
+        purchaseState.setListing(tokenListingId, PRICE, address(token));
+
+        token.mint(bob, PRICE * 2);
+        vm.prank(bob);
+        token.approve(address(purchaseState), PRICE * 2);
+
+        vm.prank(bob);
+        purchaseState.purchase(aliceProxy, tokenListingId);
+
+        vm.prank(bob);
+        vm.expectRevert("Already purchased");
+        purchaseState.purchase(aliceProxy, tokenListingId);
+    }
+
     // --- escrow ---
 
     function test_EscrowAccumulatesOnPurchase() public {
         vm.prank(bob);
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
-        assertEq(purchaseState.getEscrowBalance(aliceProxy), PRICE);
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(0)), PRICE);
     }
 
     function test_EscrowAccumulatesAcrossMultipleBuyers() public {
@@ -207,7 +283,7 @@ contract DENPurchaseStateTest is Test {
 
         uint256 listing2 = 2;
         vm.prank(alice);
-        purchaseState.setListing(listing2, PRICE);
+        purchaseState.setListing(listing2, PRICE, address(0));
 
         vm.prank(bob);
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
@@ -215,27 +291,65 @@ contract DENPurchaseStateTest is Test {
         vm.prank(dave);
         purchaseState.purchase{value: PRICE}(aliceProxy, listing2);
 
-        assertEq(purchaseState.getEscrowBalance(aliceProxy), PRICE * 2);
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(0)), PRICE * 2);
+    }
+
+    function test_EthAndTokenEscrowAreIndependent() public {
+        uint256 tokenListingId = 2;
+        vm.prank(alice);
+        purchaseState.setListing(tokenListingId, PRICE, address(token));
+
+        // Bob buys ETH listing
+        vm.prank(bob);
+        purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
+
+        // Bob buys token listing
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(purchaseState), PRICE);
+        vm.prank(bob);
+        purchaseState.purchase(aliceProxy, tokenListingId);
+
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(0)), PRICE);
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(token)), PRICE);
     }
 
     // --- withdraw ---
 
-    function test_CreatorCanWithdrawEscrow() public {
+    function test_CreatorCanWithdrawEthEscrow() public {
         vm.prank(bob);
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
 
         uint256 balanceBefore = alice.balance;
         vm.prank(alice);
-        purchaseState.withdraw();
+        purchaseState.withdraw(address(0));
 
         assertEq(alice.balance, balanceBefore + PRICE);
-        assertEq(purchaseState.getEscrowBalance(aliceProxy), 0);
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(0)), 0);
+    }
+
+    function test_CreatorCanWithdrawTokenEscrow() public {
+        uint256 tokenListingId = 2;
+        vm.prank(alice);
+        purchaseState.setListing(tokenListingId, PRICE, address(token));
+
+        token.mint(bob, PRICE);
+        vm.prank(bob);
+        token.approve(address(purchaseState), PRICE);
+        vm.prank(bob);
+        purchaseState.purchase(aliceProxy, tokenListingId);
+
+        vm.prank(alice);
+        purchaseState.withdraw(address(token));
+
+        assertEq(token.balanceOf(alice), PRICE);
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(token)), 0);
     }
 
     function test_WithdrawWithNothingReverts() public {
         vm.prank(alice);
         vm.expectRevert("Nothing to withdraw");
-        purchaseState.withdraw();
+        purchaseState.withdraw(address(0));
     }
 
     function test_CannotWithdrawOthersEscrow() public {
@@ -244,13 +358,13 @@ contract DENPurchaseStateTest is Test {
 
         vm.prank(bob);
         vm.expectRevert("Nothing to withdraw");
-        purchaseState.withdraw();
+        purchaseState.withdraw(address(0));
     }
 
     function test_UnregisteredCannotWithdraw() public {
         vm.prank(carol);
         vm.expectRevert("Not registered");
-        purchaseState.withdraw();
+        purchaseState.withdraw(address(0));
     }
 
     function test_EmitsWithdrawnEvent() public {
@@ -258,9 +372,9 @@ contract DENPurchaseStateTest is Test {
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
 
         vm.prank(alice);
-        vm.expectEmit(true, false, false, true);
-        emit DENPurchaseState.Withdrawn(aliceProxy, PRICE);
-        purchaseState.withdraw();
+        vm.expectEmit(true, true, false, true);
+        emit DENPurchaseState.Withdrawn(aliceProxy, address(0), PRICE);
+        purchaseState.withdraw(address(0));
     }
 
     // --- sunset gate ---
@@ -300,7 +414,6 @@ contract DENPurchaseStateTest is Test {
     }
 
     function test_PurchaseSucceedsWithoutContentRegistry() public {
-        // Content registry not wired — sunset gate is inactive.
         vm.prank(bob);
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
         assertTrue(purchaseState.hasPurchased(bobProxy, aliceProxy, LISTING_ID));
@@ -343,10 +456,10 @@ contract DENPurchaseStateTest is Test {
 
         uint256 balanceBefore = alice2.balance;
         vm.prank(alice2);
-        purchaseState.withdraw();
+        purchaseState.withdraw(address(0));
 
         assertEq(alice2.balance, balanceBefore + PRICE);
-        assertEq(purchaseState.getEscrowBalance(aliceProxy), 0);
+        assertEq(purchaseState.getEscrowBalance(aliceProxy, address(0)), 0);
     }
 
     function test_PurchaseStateSurvivesBuyerWalletRotation() public {
@@ -358,8 +471,6 @@ contract DENPurchaseStateTest is Test {
         _rotateWallet(bobProxy, bobKey, bob2, bob2Key);
 
         assertEq(registry.getProxy(bob2), bobProxy);
-        // Purchase state is keyed by bobProxy — unchanged by rotation.
-        // Instance calls: getProxy(bob2) → bobProxy → hasPurchased(bobProxy, ...)
         assertTrue(purchaseState.hasPurchased(bobProxy, aliceProxy, LISTING_ID));
     }
 
