@@ -14,6 +14,7 @@ import { getContract } from 'viem';
 import { chainClient } from './client.ts';
 import {
   accessGrantAbi,
+  compensationAbi,
   contentRegistryAbi,
   identityImplAbi,
   identityRegistryAbi,
@@ -59,6 +60,12 @@ export const accessGrant = getContract({
 export const contentRegistry = getContract({
   address: requireAddress('CONTENT_REGISTRY_ADDRESS'),
   abi: contentRegistryAbi,
+  client: chainClient,
+});
+
+export const compensation = getContract({
+  address: requireAddress('COMPENSATION_ADDRESS'),
+  abi: compensationAbi,
   client: chainClient,
 });
 

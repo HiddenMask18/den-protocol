@@ -148,6 +148,46 @@ export const identityImplAbi = [
   },
 ] as const;
 
+// DENHostCompensation: per-creator fee escrow; hoster claims resource compensation each settlement interval.
+export const compensationAbi = [
+  {
+    name: 'claimCompensation',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'creatorProxy', type: 'address' },
+      { name: 'token', type: 'address' },
+      { name: 'storageGB', type: 'uint256' },
+      { name: 'bandwidthGB', type: 'uint256' },
+      { name: 'instanceSize', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'getFeePool',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'creatorProxy', type: 'address' },
+      { name: 'token', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    // instanceSize declared by hoster, emitted for on-chain audit (spec §7.3).
+    name: 'CompensationClaimed',
+    type: 'event',
+    inputs: [
+      { name: 'hosterProxy',    type: 'address', indexed: true },
+      { name: 'creatorProxy',   type: 'address', indexed: true },
+      { name: 'token',          type: 'address', indexed: true },
+      { name: 'hosterClaim',    type: 'uint256', indexed: false },
+      { name: 'creatorSurplus', type: 'uint256', indexed: false },
+      { name: 'instanceSize',   type: 'uint256', indexed: false },
+    ],
+  },
+] as const;
+
 // DENContentRegistry: tracks content fingerprints and their lifecycle states.
 // hasActiveSunset is used by the access gate — when a creator has an active sunset notice,
 // the instance should not accept new subscriptions (the contracts already enforce this, but

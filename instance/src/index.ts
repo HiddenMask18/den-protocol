@@ -22,6 +22,7 @@ import { accessRoutes } from './access/routes.ts';
 import { creatorRoutes } from './creator/routes.ts';
 import { contentRoutes } from './content/routes.ts';
 import { portabilityRoutes } from './portability/routes.ts';
+import { hosterRoutes } from './hoster/routes.ts';
 
 initDb();
 loadInstanceMasterKey();
@@ -33,6 +34,7 @@ app.route('/access', accessRoutes);
 app.route('/creator', creatorRoutes);
 app.route('/creator', portabilityRoutes);
 app.route('/content', contentRoutes);
+app.route('/hoster', hosterRoutes);
 
 app.onError((err, c) => {
   console.error('[error]', err);
