@@ -19,9 +19,11 @@ forge test
 - `src/subscription/` — DENSubscription (proxy-keyed tiers, ETH + ERC-20 escrow, sunset gate)
 - `src/content/` — DENContentRegistry (fingerprint lifecycle), DENAccessGrant (signed tier→path declarations)
 - `src/purchase/` — DENPurchaseState (permanent purchase records, ETH + ERC-20 escrow)
-- `src/interfaces/` — interface definitions for all five contracts
+- `src/compensation/` — DENHostCompensation (per-creator fee escrow, progressive bracket rates, hoster claim)
+- `src/reporting/` — DENReportRegistry (protocol floor violation reports, CSAM LE hold path, governance placeholder)
+- `src/interfaces/` — interface definitions for all contracts
 - `script/` — Deploy.s.sol: deploys all contracts in dependency order and wires post-deploy calls
-- `test/` — 203-test suite covering all contracts
+- `test/` — 285-test suite covering all contracts
 
 ## Foundry Commands
 

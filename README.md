@@ -14,9 +14,9 @@ Instances are federated and independently operated. Creator identity, subscriber
 
 The protocol specification and architecture are complete. Implementation is underway in two layers:
 
-**On-chain contracts** (`contracts/`) — complete. Five contracts covering identity (proxy-keyed, rotation-safe), subscriptions (escrow + expiry, ETH and ERC-20), content lifecycle (fingerprint registry, sunset flow), access grant declarations (signed tier→path mappings), and purchase state (ETH and ERC-20). Deployment script included. 203 passing tests.
+**On-chain contracts** (`contracts/`) — complete. Nine contracts covering identity (proxy-keyed, rotation-safe), subscriptions (escrow + expiry, ETH and ERC-20), content lifecycle (fingerprint registry, sunset flow), access grant declarations (signed tier→path mappings), purchase state (ETH and ERC-20), hoster compensation (per-creator escrow, progressive bracket rates), and protocol floor violation reporting (auto-suspend, CSAM law enforcement hold path, governance placeholder for conflicted reports). Deployment script included. 285 passing tests.
 
-**Off-chain instance** (`instance/`) — Phases 1–4b complete. The auth layer, chain client, SQLite schema, ECIES blob encryption, HKDF key derivation, on-chain access gate, subscriber/buyer key delivery, creator tooling (blob upload, content upload, grant publication), portable data set export/import, and tier-by-tier key rotation are all implemented. Remaining phases (hoster compensation, moderation) are blocked on contracts not yet written.
+**Off-chain instance** (`instance/`) — Phases 1–4c complete. The auth layer, chain client, SQLite schema, ECIES blob encryption, HKDF key derivation, on-chain access gate, subscriber/buyer key delivery, creator tooling (blob upload, content upload, grant publication), portable data set export/import, tier-by-tier key rotation, and hoster compensation settlement are all implemented. Remaining phase: moderation layer (Phase 4d).
 
 ## Contributing
 

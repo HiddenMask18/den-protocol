@@ -9,6 +9,7 @@ import "../src/content/DENContentRegistry.sol";
 import "../src/content/DENAccessGrant.sol";
 import "../src/purchase/DENPurchaseState.sol";
 import "../src/compensation/DENHostCompensation.sol";
+import "../src/reporting/DENReportRegistry.sol";
 import "../src/interfaces/IDENHostCompensation.sol";
 
 // Deploys all DEN protocol contracts and wires them together.
@@ -56,6 +57,7 @@ contract DeployDEN is Script {
         address accessGrant;
         address purchaseState;
         address compensation;
+        address reportRegistry;
     }
 
     function run() external returns (DeployedAddresses memory deployed) {
@@ -96,6 +98,15 @@ contract DeployDEN is Script {
             address(contentRegistry)
         );
 
+        // 8. Report registry — protocol floor violation reporting, suspension, CSAM LE referral path.
+        //    setGovernance() is NOT called here — the governance contract does not exist in V1.
+        //    Operator-conflicted reports will remain unresolvable until governance is deployed and wired.
+        DENReportRegistry reportRegistry = new DENReportRegistry(
+            address(registry),
+            address(subscription),
+            address(contentRegistry)
+        );
+
         // Post-deployment wiring.
 
         // Sunset gate: subscription and purchase contracts check active sunset before accepting payment.
@@ -133,7 +144,8 @@ contract DeployDEN is Script {
             contentRegistry: address(contentRegistry),
             accessGrant: address(accessGrant),
             purchaseState: address(purchaseState),
-            compensation: address(compensation)
+            compensation: address(compensation),
+            reportRegistry: address(reportRegistry)
         });
 
         console.log("\n=== DEN Protocol Deployment ===");
@@ -144,6 +156,8 @@ contract DeployDEN is Script {
         console.log("ACCESS_GRANT_ADDRESS      =", deployed.accessGrant);
         console.log("PURCHASE_STATE_ADDRESS    =", deployed.purchaseState);
         console.log("COMPENSATION_ADDRESS      =", deployed.compensation);
+        console.log("REPORT_REGISTRY_ADDRESS   =", deployed.reportRegistry);
         console.log("\nPaste these into instance/.env to connect the off-chain layer.");
+        console.log("Note: call reportRegistry.setGovernance(addr) once the governance contract is deployed.");
     }
 }

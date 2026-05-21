@@ -160,6 +160,29 @@ DELETE /creator/content/:fingerprint
 
 ---
 
+### Hoster compensation
+
+Callable only by the wallet matching `INSTANCE_OPERATOR_PRIVATE_KEY`. Computes and settles the hoster's resource claim against per-creator fee escrow on-chain (spec §7.2, §13.2).
+
+```
+POST /hoster/claim
+Body: {
+  creatorProxy:  "0x...",   // creator whose escrow to settle against
+  storageGB:     12.5,      // declared storage consumed (GB)
+  bandwidthGB:   80.0,      // declared bandwidth served (GB)
+  instanceSize:  140        // creator_count + subscription_relationship_count for bracket selection
+}
+→ {
+  txHash:        "0x...",
+  hostedAmount:  "...",     // wei claimed by hoster
+  surplusAmount: "..."      // wei returned to creator
+}
+```
+
+The instance signs and broadcasts the `claimCompensation` transaction directly. Storage and bandwidth are declared by the hoster and recorded on-chain for community audit (declared-plus-auditable model per spec §7.3).
+
+---
+
 ### Content download (subscriber/buyer)
 
 ```
@@ -187,8 +210,9 @@ The instance checks on-chain entitlement live (no caching), decrypts the creator
 ```
 src/
 ├── chain/
-│   ├── abis.ts         # ABI slices for the five DEN contracts + identity impl
+│   ├── abis.ts         # ABI slices for all DEN contracts + identity impl
 │   ├── client.ts       # viem publicClient (read-only chain connection)
+│   ├── wallet.ts       # viem walletClient + operatorAccount (signs compensation txs)
 │   └── contracts.ts    # Typed contract instances + getPrimaryWallet()
 ├── auth/
 │   ├── nonce.ts        # In-memory challenge nonce store (5-min TTL, one-time use)
@@ -207,6 +231,8 @@ src/
 │   └── routes.ts       # Creator tooling: blob, content, and grant management
 ├── content/
 │   └── routes.ts       # GET /content/:fingerprint — ciphertext download
+├── hoster/
+│   └── routes.ts       # POST /hoster/claim — operator-initiated compensation settlement
 ├── db/
 │   └── index.ts        # SQLite init and schema (sessions, blobs, content, grants)
 └── index.ts            # Entry point — Hono app, route registration
@@ -230,5 +256,5 @@ src/
 | Access grant local publication | Done |
 | Migration support (portable data set export/import) | Done |
 | Key rotation (tier-by-tier re-encryption) | Done |
-| Hoster compensation | Planned (needs on-chain contracts) |
-| Moderation layer | Planned (needs on-chain contracts) |
+| Hoster compensation settlement (`POST /hoster/claim`) | Done |
+| Moderation layer (report filing, determination, CSAM path) | Planned |
