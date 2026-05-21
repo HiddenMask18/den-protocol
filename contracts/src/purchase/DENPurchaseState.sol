@@ -5,12 +5,18 @@ import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENPurchaseState.sol";
 import "../interfaces/IDENContentRegistry.sol";
+import "../interfaces/IDENHostCompensation.sol";
 import "../interfaces/IERC20.sol";
 
 contract DENPurchaseState is IDENPurchaseState {
 
+    // Protocol fee basis points (2.5%). Governance parameter for V1 — hardcoded.
+    // Must match FEE_BPS in DENHostCompensation and DENSubscription.
+    uint256 public constant FEE_BPS = 250;
+
     IDENIdentity private _identity;
     address private _contentRegistry;
+    address private _compensation;
 
     struct Listing {
         uint256 price;
@@ -39,6 +45,14 @@ contract DENPurchaseState is IDENPurchaseState {
         require(_contentRegistry == address(0), "Already set");
         require(contentRegistry != address(0), "Zero address");
         _contentRegistry = contentRegistry;
+    }
+
+    // Wire up the host compensation contract after deployment. Callable once.
+    // If not set, the full payment goes to creator escrow with no protocol fee deducted.
+    function setCompensation(address compensation) external {
+        require(_compensation == address(0), "Already set");
+        require(compensation != address(0), "Zero address");
+        _compensation = compensation;
     }
 
     // token = address(0) for native ETH; any ERC-20 contract address otherwise.
@@ -71,12 +85,26 @@ contract DENPurchaseState is IDENPurchaseState {
 
         if (listing.token == address(0)) {
             require(msg.value == listing.price, "Incorrect payment amount");
-            _escrow[creatorProxy][address(0)] += msg.value;
+            if (_compensation != address(0)) {
+                uint256 fee = (listing.price * FEE_BPS) / 10000;
+                _escrow[creatorProxy][address(0)] += listing.price - fee;
+                IDENHostCompensation(_compensation).depositFee{value: fee}(creatorProxy, address(0), fee);
+            } else {
+                _escrow[creatorProxy][address(0)] += msg.value;
+            }
         } else {
             require(msg.value == 0, "Do not send ETH for token payment");
             bool ok = IERC20(listing.token).transferFrom(msg.sender, address(this), listing.price);
             require(ok, "Token transfer failed");
-            _escrow[creatorProxy][listing.token] += listing.price;
+            if (_compensation != address(0)) {
+                uint256 fee = (listing.price * FEE_BPS) / 10000;
+                _escrow[creatorProxy][listing.token] += listing.price - fee;
+                bool feeOk = IERC20(listing.token).transfer(_compensation, fee);
+                require(feeOk, "Fee transfer failed");
+                IDENHostCompensation(_compensation).depositFee(creatorProxy, listing.token, fee);
+            } else {
+                _escrow[creatorProxy][listing.token] += listing.price;
+            }
         }
 
         _purchases[buyerProxy][creatorProxy][listingId] = block.timestamp;

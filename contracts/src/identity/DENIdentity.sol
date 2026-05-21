@@ -37,4 +37,9 @@ contract DENIdentity is IDENIdentity {
     function resolve(string calldata) external pure returns (address) {
         return address(0);
     }
+
+    // Stub implementation — superseded by DENIdentityRegistry.
+    function handleOf(address) external pure returns (string memory) {
+        return "";
+    }
 }

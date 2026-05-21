@@ -24,8 +24,12 @@ contract DENContentRegistry is IDENContentRegistry {
     // creatorProxy => approved operator proxy (the instance they're registered with)
     mapping(address => address) private _creatorOperator;
 
-    // creatorProxy => true once any content enters SunsetNoticed (used by subscription gate)
+    // creatorProxy => true while any content is in SunsetNoticed state (used by subscription gate)
     mapping(address => bool) private _creatorSunsetActive;
+
+    // creatorProxy => count of fingerprints currently in SunsetNoticed state.
+    // Cleared to false when count drops to zero (creator completes migration and deletes all sunsetted content).
+    mapping(address => uint256) private _activeSunsetCount;
 
     event ContentRegistered(address indexed creatorProxy, bytes32 indexed fingerprint, uint256 tierId);
     event ContentArchived(address indexed creatorProxy, bytes32 indexed fingerprint);
@@ -96,9 +100,17 @@ contract DENContentRegistry is IDENContentRegistry {
 
         uint256 tierDuration = _subscription.getTierDuration(record.creatorProxy, record.tierId);
         uint256 window = tierDuration > 0 ? tierDuration : SUBSCRIBER_PROTECTION_WINDOW;
-        uint256 deletableAfter = block.timestamp + window;
+        // Use the maximum subscription expiry ever recorded for this tier as the floor.
+        // A subscriber who stacked multiple renewals before the notice may have an expiry
+        // beyond block.timestamp + window. spec §7.5 Step 3: access persists until their
+        // paid period lapses naturally — not just one tier duration from now.
+        uint256 maxSubExpiry = _subscription.getMaxSubscriptionExpiry(record.creatorProxy, record.tierId);
+        uint256 deletableAfter = maxSubExpiry > block.timestamp + window
+            ? maxSubExpiry
+            : block.timestamp + window;
         record.deletableAfter = deletableAfter;
 
+        _activeSunsetCount[record.creatorProxy]++;
         _creatorSunsetActive[record.creatorProxy] = true;
 
         emit SunsetNoticeIssued(record.creatorProxy, fingerprint, deletableAfter);
@@ -122,6 +134,12 @@ contract DENContentRegistry is IDENContentRegistry {
         require(isCreator || isOperator, "Not authorized");
 
         record.lifecycle = Lifecycle.Deleted;
+
+        _activeSunsetCount[record.creatorProxy]--;
+        if (_activeSunsetCount[record.creatorProxy] == 0) {
+            _creatorSunsetActive[record.creatorProxy] = false;
+        }
+
         emit ContentDeleted(record.creatorProxy, fingerprint);
     }
 

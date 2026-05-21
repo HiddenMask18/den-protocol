@@ -5,12 +5,18 @@ import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENSubscription.sol";
 import "../interfaces/IDENContentRegistry.sol";
+import "../interfaces/IDENHostCompensation.sol";
 import "../interfaces/IERC20.sol";
 
 contract DENSubscription is IDENSubscription {
 
+    // Protocol fee basis points (2.5%). Governance parameter for V1 — hardcoded.
+    // Must match FEE_BPS in DENHostCompensation and DENPurchaseState.
+    uint256 public constant FEE_BPS = 250;
+
     IDENIdentity private _identity;
     address private _contentRegistry;
+    address private _compensation;
 
     struct Tier {
         uint256 price;      // token units (wei for ETH, smallest denomination for ERC-20)
@@ -28,6 +34,10 @@ contract DENSubscription is IDENSubscription {
     // creatorProxy => token => claimable escrow balance
     mapping(address => mapping(address => uint256)) private _escrow;
 
+    // creatorProxy => tierId => highest subscription expiry ever recorded (high-water mark).
+    // Never decremented. Used by DENContentRegistry to compute deletableAfter (spec §7.5 Step 3).
+    mapping(address => mapping(uint256 => uint256)) private _maxSubscriptionExpiry;
+
     event TierSet(address indexed creatorProxy, uint256 indexed tierId, uint256 price, uint256 duration, address indexed token);
     event Subscribed(address indexed subscriberProxy, address indexed creatorProxy, uint256 indexed tierId, uint256 expiry);
     event Withdrawn(address indexed creatorProxy, address indexed token, uint256 amount);
@@ -41,6 +51,14 @@ contract DENSubscription is IDENSubscription {
         require(_contentRegistry == address(0), "Already set");
         require(contentRegistry != address(0), "Zero address");
         _contentRegistry = contentRegistry;
+    }
+
+    // Wire up the host compensation contract after deployment. Callable once.
+    // If not set, the full payment goes to creator escrow with no protocol fee deducted.
+    function setCompensation(address compensation) external {
+        require(_compensation == address(0), "Already set");
+        require(compensation != address(0), "Zero address");
+        _compensation = compensation;
     }
 
     // Creator calls from their wallet; proxy is resolved internally and used as the stable key.
@@ -77,12 +95,26 @@ contract DENSubscription is IDENSubscription {
 
         if (tier.token == address(0)) {
             require(msg.value == tier.price, "Incorrect payment amount");
-            _escrow[creatorProxy][address(0)] += msg.value;
+            if (_compensation != address(0)) {
+                uint256 fee = (tier.price * FEE_BPS) / 10000;
+                _escrow[creatorProxy][address(0)] += tier.price - fee;
+                IDENHostCompensation(_compensation).depositFee{value: fee}(creatorProxy, address(0), fee);
+            } else {
+                _escrow[creatorProxy][address(0)] += msg.value;
+            }
         } else {
             require(msg.value == 0, "Do not send ETH for token payment");
             bool ok = IERC20(tier.token).transferFrom(msg.sender, address(this), tier.price);
             require(ok, "Token transfer failed");
-            _escrow[creatorProxy][tier.token] += tier.price;
+            if (_compensation != address(0)) {
+                uint256 fee = (tier.price * FEE_BPS) / 10000;
+                _escrow[creatorProxy][tier.token] += tier.price - fee;
+                bool feeOk = IERC20(tier.token).transfer(_compensation, fee);
+                require(feeOk, "Fee transfer failed");
+                IDENHostCompensation(_compensation).depositFee(creatorProxy, tier.token, fee);
+            } else {
+                _escrow[creatorProxy][tier.token] += tier.price;
+            }
         }
 
         uint256 start = block.timestamp;
@@ -93,6 +125,10 @@ contract DENSubscription is IDENSubscription {
 
         uint256 expiry = start + tier.duration;
         _subscriptions[subscriberProxy][creatorProxy][tierId] = expiry;
+
+        if (expiry > _maxSubscriptionExpiry[creatorProxy][tierId]) {
+            _maxSubscriptionExpiry[creatorProxy][tierId] = expiry;
+        }
 
         emit Subscribed(subscriberProxy, creatorProxy, tierId, expiry);
     }
@@ -119,6 +155,10 @@ contract DENSubscription is IDENSubscription {
 
     function getTierToken(address creatorProxy, uint256 tierId) external view returns (address) {
         return _tiers[creatorProxy][tierId].token;
+    }
+
+    function getMaxSubscriptionExpiry(address creatorProxy, uint256 tierId) external view returns (uint256) {
+        return _maxSubscriptionExpiry[creatorProxy][tierId];
     }
 
     // Creator calls from their current wallet. Proxy is resolved internally, so this works

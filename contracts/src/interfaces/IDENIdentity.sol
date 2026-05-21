@@ -7,4 +7,5 @@ interface IDENIdentity {
     function getIdentityAddress(address wallet) external view returns (address);
     function getProxy(address wallet) external view returns (address);
     function resolve(string calldata handle) external view returns (address proxy);
+    function handleOf(address proxy) external view returns (string memory);
 }

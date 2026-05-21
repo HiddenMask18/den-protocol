@@ -3,6 +3,10 @@ pragma solidity ^0.8.20;
 
 interface IDENPurchaseState {
     function setContentRegistry(address contentRegistry) external;
+
+    // Wire up the host compensation contract post-deployment to enable protocol fee collection.
+    // Callable once; address(0) is rejected. If not set, full payment goes to creator escrow.
+    function setCompensation(address compensation) external;
     // token = address(0) for native ETH; any ERC-20 contract address otherwise.
     function setListing(uint256 listingId, uint256 price, address token) external;
     // For ETH listings: call with msg.value == listing.price.

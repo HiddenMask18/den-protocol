@@ -314,6 +314,62 @@ contract DENContentRegistryTest is Test {
         assertTrue(contentRegistry.hasActiveSunset(aliceProxy));
     }
 
+    // hasActiveSunset must clear when the last SunsetNoticed fingerprint is deleted (spec §7.5).
+    // A creator who completes migration and deletes all content must be able to operate on a new instance.
+    function test_HasActiveSunsetClearedAfterAllContentDeleted() public {
+        vm.prank(alice);
+        contentRegistry.registerContent(FP1, TIER_ID);
+        vm.prank(alice);
+        contentRegistry.registerContent(FP2, TIER_ID);
+
+        vm.prank(instanceOp);
+        contentRegistry.issueSunsetNotice(FP1);
+        vm.prank(instanceOp);
+        contentRegistry.issueSunsetNotice(FP2);
+        assertTrue(contentRegistry.hasActiveSunset(aliceProxy));
+
+        vm.warp(block.timestamp + DURATION);
+
+        vm.prank(alice);
+        contentRegistry.deleteContent(FP1);
+        // Still true — FP2 is still SunsetNoticed
+        assertTrue(contentRegistry.hasActiveSunset(aliceProxy));
+
+        vm.prank(alice);
+        contentRegistry.deleteContent(FP2);
+        // Now false — all sunsetted content has been deleted
+        assertFalse(contentRegistry.hasActiveSunset(aliceProxy));
+    }
+
+    // deletableAfter must cover subscribers who stacked renewals before the notice (spec §7.5 Step 3).
+    function test_SunsetNoticeDeletableAfterCoversStackedRenewals() public {
+        vm.deal(address(this), 10 ether);
+
+        address subscriber = makeAddr("subscriber");
+        vm.deal(subscriber, 10 ether);
+        vm.prank(subscriber);
+        registry.register();
+        address subscriberProxy = registry.getProxy(subscriber);
+
+        // Subscriber renews twice — expiry = now + 2 * DURATION
+        vm.prank(subscriber);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+        vm.prank(subscriber);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+        uint256 subscriberExpiry = subscription.getSubscriptionExpiry(subscriberProxy, aliceProxy, TIER_ID);
+        assertEq(subscriberExpiry, block.timestamp + 2 * DURATION);
+
+        vm.prank(alice);
+        contentRegistry.registerContent(FP1, TIER_ID);
+        vm.prank(instanceOp);
+        contentRegistry.issueSunsetNotice(FP1);
+
+        IDENContentRegistry.ContentRecord memory rec = contentRegistry.getContent(FP1);
+        // deletableAfter must be the subscriber's actual expiry, not just block.timestamp + DURATION
+        assertEq(rec.deletableAfter, subscriberExpiry);
+        assertTrue(rec.deletableAfter > block.timestamp + DURATION);
+    }
+
     // --- deleteContent ---
 
     function test_DeleteAfterProtectionWindow() public {

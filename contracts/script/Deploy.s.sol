@@ -8,8 +8,10 @@ import "../src/subscription/DENSubscription.sol";
 import "../src/content/DENContentRegistry.sol";
 import "../src/content/DENAccessGrant.sol";
 import "../src/purchase/DENPurchaseState.sol";
+import "../src/compensation/DENHostCompensation.sol";
+import "../src/interfaces/IDENHostCompensation.sol";
 
-// Deploys all six DEN protocol contracts and wires them together.
+// Deploys all DEN protocol contracts and wires them together.
 //
 // Deployment order is determined by constructor dependencies:
 //   DENIdentityImpl        (no deps)
@@ -18,11 +20,16 @@ import "../src/purchase/DENPurchaseState.sol";
 //   DENContentRegistry     (needs registry + subscription)
 //   DENAccessGrant         (needs registry)
 //   DENPurchaseState       (needs registry)
+//   DENHostCompensation    (needs registry + contentRegistry)
 //
-// After deployment, two one-time wiring calls connect DENContentRegistry
-// to the contracts that need to check the sunset gate:
-//   subscription.setContentRegistry(contentRegistry)
-//   purchaseState.setContentRegistry(contentRegistry)
+// Post-deployment wiring:
+//   subscription.setContentRegistry(contentRegistry)   — sunset gate
+//   purchaseState.setContentRegistry(contentRegistry)  — sunset gate
+//   subscription.setCompensation(compensation)          — protocol fee routing
+//   purchaseState.setCompensation(compensation)         — protocol fee routing
+//   compensation.setSubscriptionContract(subscription)  — authorize depositor
+//   compensation.setPurchaseContract(purchaseState)     — authorize depositor
+//   compensation.setTokenRates(address(0), ethRates)    — initial ETH rates
 //
 // Usage:
 //   # Dry-run against local anvil (no --broadcast)
@@ -48,6 +55,7 @@ contract DeployDEN is Script {
         address contentRegistry;
         address accessGrant;
         address purchaseState;
+        address compensation;
     }
 
     function run() external returns (DeployedAddresses memory deployed) {
@@ -82,11 +90,39 @@ contract DeployDEN is Script {
         // 6. Purchase state — permanent purchase records for shop items and packs.
         DENPurchaseState purchaseState = new DENPurchaseState(address(registry));
 
-        // Post-deployment wiring: connect the content registry to the contracts that
-        // gate on sunset state. Each is callable once only; there is no access control
-        // (no deployer privilege is retained after this call).
+        // 7. Host compensation — per-creator escrow, protocol fee collection, hoster resource claims.
+        DENHostCompensation compensation = new DENHostCompensation(
+            address(registry),
+            address(contentRegistry)
+        );
+
+        // Post-deployment wiring.
+
+        // Sunset gate: subscription and purchase contracts check active sunset before accepting payment.
         subscription.setContentRegistry(address(contentRegistry));
         purchaseState.setContentRegistry(address(contentRegistry));
+
+        // Protocol fee routing: subscription and purchase contracts split 2.5% into per-creator escrow.
+        subscription.setCompensation(address(compensation));
+        purchaseState.setCompensation(address(compensation));
+
+        // Authorize depositors: only these two contracts may call depositFee.
+        compensation.setSubscriptionContract(address(subscription));
+        compensation.setPurchaseContract(address(purchaseState));
+
+        // Initial progressive rate table for ETH (address(0)), spec §13.4.
+        // Rates in wei per declared GB, calibrated at approximately $2000/ETH.
+        // Governance parameters — update via setTokenRates as ETH price changes.
+        //   Micro  (<80):   storage $0.60/GB = 3e14 wei, bandwidth $0.80/GB = 4e14 wei
+        //   Small  (80–200): storage $0.45/GB = 2.25e14 wei, bandwidth $0.60/GB = 3e14 wei
+        //   Medium (200–500): storage $0.30/GB = 1.5e14 wei, bandwidth $0.40/GB = 2e14 wei
+        //   Large  (500+):  storage $0.46/GB = 2.3e14 wei, bandwidth $0.69/GB = 3.45e14 wei
+        IDENHostCompensation.BracketRates[4] memory ethRates;
+        ethRates[0] = IDENHostCompensation.BracketRates({storageRatePerGB: 3e14,      bandwidthRatePerGB: 4e14});
+        ethRates[1] = IDENHostCompensation.BracketRates({storageRatePerGB: 225000000000000, bandwidthRatePerGB: 3e14});
+        ethRates[2] = IDENHostCompensation.BracketRates({storageRatePerGB: 15e13,     bandwidthRatePerGB: 2e14});
+        ethRates[3] = IDENHostCompensation.BracketRates({storageRatePerGB: 23e13,     bandwidthRatePerGB: 345000000000000});
+        compensation.setTokenRates(address(0), ethRates);
 
         vm.stopBroadcast();
 
@@ -96,7 +132,8 @@ contract DeployDEN is Script {
             subscription: address(subscription),
             contentRegistry: address(contentRegistry),
             accessGrant: address(accessGrant),
-            purchaseState: address(purchaseState)
+            purchaseState: address(purchaseState),
+            compensation: address(compensation)
         });
 
         console.log("\n=== DEN Protocol Deployment ===");
@@ -106,6 +143,7 @@ contract DeployDEN is Script {
         console.log("CONTENT_REGISTRY_ADDRESS  =", deployed.contentRegistry);
         console.log("ACCESS_GRANT_ADDRESS      =", deployed.accessGrant);
         console.log("PURCHASE_STATE_ADDRESS    =", deployed.purchaseState);
+        console.log("COMPENSATION_ADDRESS      =", deployed.compensation);
         console.log("\nPaste these into instance/.env to connect the off-chain layer.");
     }
 }
