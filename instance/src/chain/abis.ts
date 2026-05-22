@@ -188,6 +188,94 @@ export const compensationAbi = [
   },
 ] as const;
 
+// DENReportRegistry: protocol floor violation reports (CSAM, NON_CONSENT).
+// isSuspended is checked on every content request before serving ciphertext (spec §12.3).
+// Operator determination routes use determineReport, setLawEnforcementHold, removeLawEnforcementHold.
+// reinstateAfterCsamExpiry is permissionless — any caller may trigger it after the suspension period.
+//
+// Enums encoded as uint8 in ABI:
+//   ViolationCategory: 0=CSAM, 1=NON_CONSENT
+//   ReportStatus:      0=Active, 1=Upheld, 2=Dismissed, 3=FalseReport, 4=Reinstated
+export const reportRegistryAbi = [
+  {
+    name: 'isSuspended',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'fingerprint', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    name: 'getReport',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'reportId', type: 'uint256' }],
+    outputs: [{
+      name: '',
+      type: 'tuple',
+      components: [
+        { name: 'id', type: 'uint256' },
+        { name: 'fingerprint', type: 'bytes32' },
+        { name: 'reporterProxy', type: 'address' },
+        { name: 'accessTimestamp', type: 'uint256' },
+        { name: 'category', type: 'uint8' },
+        { name: 'evidenceHash', type: 'bytes32' },
+        { name: 'status', type: 'uint8' },
+        { name: 'filedAt', type: 'uint256' },
+        { name: 'operatorConflict', type: 'bool' },
+      ],
+    }],
+  },
+  {
+    name: 'determineReport',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'reportId', type: 'uint256' },
+      { name: 'outcome', type: 'uint8' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'setLawEnforcementHold',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'reportId', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    name: 'removeLawEnforcementHold',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'reportId', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    name: 'reinstateAfterCsamExpiry',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'reportId', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    name: 'ReportDetermined',
+    type: 'event',
+    inputs: [
+      { name: 'reportId', type: 'uint256', indexed: true },
+      { name: 'outcome', type: 'uint8', indexed: false },
+    ],
+  },
+  {
+    name: 'LawEnforcementHoldSet',
+    type: 'event',
+    inputs: [{ name: 'reportId', type: 'uint256', indexed: true }],
+  },
+  {
+    name: 'LawEnforcementHoldRemoved',
+    type: 'event',
+    inputs: [{ name: 'reportId', type: 'uint256', indexed: true }],
+  },
+] as const;
+
 // DENContentRegistry: tracks content fingerprints and their lifecycle states.
 // hasActiveSunset is used by the access gate — when a creator has an active sunset notice,
 // the instance should not accept new subscriptions (the contracts already enforce this, but

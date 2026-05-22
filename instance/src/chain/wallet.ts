@@ -1,8 +1,10 @@
-// Instance operator wallet — used exclusively for signing claimCompensation transactions.
+// Instance operator wallet — signs transactions on behalf of the instance operator.
 //
 // The instance reads chain state with a publicClient (client.ts) and NEVER signs creator or
-// subscriber transactions. This file is the single exception: the hoster's operator wallet
-// signs DENHostCompensation.claimCompensation settlements on their behalf (spec §7.2).
+// subscriber transactions. This walletClient is the exception: the operator wallet signs
+// DENHostCompensation.claimCompensation settlements (spec §7.2) and DENReportRegistry
+// determination calls — determineReport, setLawEnforcementHold, removeLawEnforcementHold,
+// reinstateAfterCsamExpiry (spec §12).
 //
 // The corresponding wallet address must be registered as a DEN participant and set as the
 // content operator for each hosted creator via DENContentRegistry.setContentOperator.

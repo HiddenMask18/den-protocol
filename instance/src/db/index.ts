@@ -169,6 +169,22 @@ export function initDb(): void {
       PRIMARY KEY (subscriber_proxy, creator_proxy, tier_id)
     )
   `);
+
+  // Report evidence: off-chain evidence submitted by subscribers for protocol floor reports.
+  // The subscriber stores evidence here to get an evidenceHash (keccak256 of evidence bytes)
+  // before calling DENReportRegistry.fileReport on-chain with that hash (spec §12.2).
+  // Stored so the creator can be notified with full report contents on suspension (spec §12.4).
+  // evidence_hash is 0x-prefixed keccak256 hex; category: 0=CSAM, 1=NON_CONSENT.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS report_evidence (
+      evidence_hash  TEXT    PRIMARY KEY,
+      fingerprint    TEXT    NOT NULL,
+      reporter_proxy TEXT    NOT NULL,
+      category       INTEGER NOT NULL,
+      evidence       BLOB    NOT NULL,
+      submitted_at   INTEGER NOT NULL
+    )
+  `);
 }
 
 export function getDb(): Database {

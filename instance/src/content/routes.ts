@@ -15,6 +15,7 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../auth/middleware.ts';
 import { getDb } from '../db/index.ts';
+import { reportRegistry } from '../chain/contracts.ts';
 
 type SessionEnv = {
   Variables: {
@@ -25,12 +26,19 @@ type SessionEnv = {
 
 export const contentRoutes = new Hono<SessionEnv>();
 
-contentRoutes.get('/:fingerprint', requireAuth, (c) => {
+contentRoutes.get('/:fingerprint', requireAuth, async (c) => {
   const { fingerprint } = c.req.param();
 
   // Validate fingerprint format: 0x + 64 hex chars (SHA-256 = 32 bytes)
   if (!/^0x[0-9a-fA-F]{64}$/.test(fingerprint)) {
     return c.json({ error: 'fingerprint must be a 0x-prefixed 64-char hex string (SHA-256)' }, 400);
+  }
+
+  // Spec §12.3: suspension is the mandatory first step for all violation claims.
+  // Check on every content request — a suspended fingerprint must not be served.
+  const suspended = await reportRegistry.read.isSuspended([fingerprint as `0x${string}`]);
+  if (suspended) {
+    return c.json({ error: 'content is suspended pending moderation review' }, 403);
   }
 
   type Row = { ciphertext: Uint8Array | null; is_reference: number };

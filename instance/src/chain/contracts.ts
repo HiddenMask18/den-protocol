@@ -1,4 +1,4 @@
-// Typed contract instances for the five DEN protocol contracts.
+// Typed contract instances for the DEN protocol contracts.
 //
 // A "contract instance" in viem is just an object that bundles together a contract's address,
 // its ABI, and a client. Once you have one, you can call any read function on it without
@@ -19,6 +19,7 @@ import {
   identityImplAbi,
   identityRegistryAbi,
   purchaseStateAbi,
+  reportRegistryAbi,
   subscriptionAbi,
 } from './abis.ts';
 
@@ -66,6 +67,12 @@ export const contentRegistry = getContract({
 export const compensation = getContract({
   address: requireAddress('COMPENSATION_ADDRESS'),
   abi: compensationAbi,
+  client: chainClient,
+});
+
+export const reportRegistry = getContract({
+  address: requireAddress('REPORT_REGISTRY_ADDRESS'),
+  abi: reportRegistryAbi,
   client: chainClient,
 });
 
