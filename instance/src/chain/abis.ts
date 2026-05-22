@@ -160,6 +160,7 @@ export const compensationAbi = [
       { name: 'storageGB', type: 'uint256' },
       { name: 'bandwidthGB', type: 'uint256' },
       { name: 'instanceSize', type: 'uint256' },
+      { name: 'subscriberCount', type: 'uint256' },
     ],
     outputs: [],
   },
@@ -174,16 +175,17 @@ export const compensationAbi = [
     outputs: [{ name: '', type: 'uint256' }],
   },
   {
-    // instanceSize declared by hoster, emitted for on-chain audit (spec §7.3).
+    // instanceSize and subscriberCount declared by hoster, emitted for on-chain audit (spec §7.3).
     name: 'CompensationClaimed',
     type: 'event',
     inputs: [
-      { name: 'hosterProxy',    type: 'address', indexed: true },
-      { name: 'creatorProxy',   type: 'address', indexed: true },
-      { name: 'token',          type: 'address', indexed: true },
-      { name: 'hosterClaim',    type: 'uint256', indexed: false },
-      { name: 'creatorSurplus', type: 'uint256', indexed: false },
-      { name: 'instanceSize',   type: 'uint256', indexed: false },
+      { name: 'hosterProxy',     type: 'address', indexed: true },
+      { name: 'creatorProxy',    type: 'address', indexed: true },
+      { name: 'token',           type: 'address', indexed: true },
+      { name: 'hosterClaim',     type: 'uint256', indexed: false },
+      { name: 'creatorSurplus',  type: 'uint256', indexed: false },
+      { name: 'instanceSize',    type: 'uint256', indexed: false },
+      { name: 'subscriberCount', type: 'uint256', indexed: false },
     ],
   },
 ] as const;

@@ -379,9 +379,11 @@ contract DENPurchaseStateTest is Test {
 
     // --- sunset gate ---
 
-    function test_PurchaseBlockedAfterSunset() public {
-        DENSubscription subscription = new DENSubscription(address(registry));
-        DENContentRegistry cr = new DENContentRegistry(address(registry), address(subscription));
+    // Spec §5.6 restricts new subscriptions after sunset, not purchases.
+    // Buyers should be able to purchase shop items during a creator's sunset window.
+    function test_PurchaseAllowedAfterSunset() public {
+        DENSubscription freshSub = new DENSubscription(address(registry));
+        DENContentRegistry cr = new DENContentRegistry(address(registry), address(freshSub));
         purchaseState.setContentRegistry(address(cr));
 
         address op = makeAddr("op");
@@ -397,10 +399,12 @@ contract DENPurchaseStateTest is Test {
 
         vm.prank(op);
         cr.issueSunsetNotice(fp);
+        assertTrue(cr.hasActiveSunset(aliceProxy));
 
+        // Purchase should succeed — sunset only blocks new subscriptions (spec §5.6).
         vm.prank(bob);
-        vm.expectRevert("Creator has active sunset notice");
         purchaseState.purchase{value: PRICE}(aliceProxy, LISTING_ID);
+        assertTrue(purchaseState.hasPurchased(bobProxy, aliceProxy, LISTING_ID));
     }
 
     function test_PurchaseSucceedsBeforeSunset() public {

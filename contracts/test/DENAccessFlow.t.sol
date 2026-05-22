@@ -121,7 +121,10 @@ contract DENAccessFlowTest is Test {
     }
 
     // The same access check must pass after creator wallet rotation.
-    function test_AccessCheckSurvivesCreatorWalletRotation() public {
+    // Spec §4.1: access grant signatures must verify against the creator's CURRENT primary wallet.
+    // After wallet rotation, grants signed by the old wallet are invalidated — verifyGrant returns
+    // false until the creator re-publishes the grant with their new wallet.
+    function test_GrantInvalidatedAfterRotationUntilRepublished() public {
         vm.prank(alice);
         subscription.setTier(TIER_ID, PRICE, DURATION, address(0));
 
@@ -141,24 +144,29 @@ contract DENAccessFlowTest is Test {
         (address alice2, uint256 alice2Key) = makeAddrAndKey("alice2");
         _rotateWallet(aliceProxy, alice2, alice2Key);
 
-        // All three checks still pass — everything is keyed by aliceProxy, not alice's wallet
+        // Subscription and content state survive rotation (proxy-keyed).
         assertTrue(subscription.isSubscribed(bobProxy, aliceProxy, TIER_ID));
-
-        (bool valid, string[] memory returnedPaths) = accessGrant.verifyGrant(aliceProxy, TIER_ID);
-        assertTrue(valid);
-        assertEq(returnedPaths[0], "tier:1");
-
-        IDENContentRegistry.ContentRecord memory rec = contentRegistry.getContent(FINGERPRINT);
-        assertEq(rec.tierId, TIER_ID);
         assertTrue(contentRegistry.isContentActive(FINGERPRINT));
 
-        // Creator's new wallet can also withdraw escrow
+        // Grant is invalidated: old signature no longer verifies against the new primary wallet.
+        (bool validAfterRotation,) = accessGrant.verifyGrant(aliceProxy, TIER_ID);
+        assertFalse(validAfterRotation);
+
+        // Creator re-publishes the grant with their new wallet (version 2, same paths).
+        bytes memory sig2 = _signGrant(alice2Key, aliceProxy, TIER_ID, paths, 2);
+        vm.prank(alice2);
+        accessGrant.publishGrant(TIER_ID, paths, sig2);
+
+        // Grant is valid again.
+        (bool validAfterRepublish, string[] memory returnedPaths) = accessGrant.verifyGrant(aliceProxy, TIER_ID);
+        assertTrue(validAfterRepublish);
+        assertEq(returnedPaths[0], "tier:1");
+
+        // Creator's new wallet can withdraw escrow.
         uint256 balanceBefore = alice2.balance;
         vm.prank(alice2);
         subscription.withdraw(address(0));
         assertEq(alice2.balance, balanceBefore + PRICE);
-
-        (alice2Key); // silence unused variable warning
     }
 
     // Access is denied once a subscription lapses.

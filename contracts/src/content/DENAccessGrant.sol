@@ -68,12 +68,38 @@ contract DENAccessGrant is IDENAccessGrant {
         return _grants[creatorProxy][tierId];
     }
 
+    // Returns true and the derivation paths only if the stored signature still verifies against
+    // the creator's CURRENT primary wallet (spec §4.1). A grant signed by an old wallet after
+    // a rotation returns valid=false — the creator must re-publish the grant with the new wallet.
     function verifyGrant(address creatorProxy, uint256 tierId) external view returns (bool valid, string[] memory paths) {
         AccessGrant storage grant = _grants[creatorProxy][tierId];
         if (!grant.exists) {
             return (false, new string[](0));
         }
-        return (true, grant.derivationPaths);
+
+        bytes32 pathsHash = keccak256(abi.encode(grant.derivationPaths));
+        bytes32 structHash = keccak256(abi.encode("DEN-access-grant", creatorProxy, tierId, pathsHash, grant.version));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
+
+        address currentPrimary = IDENParticipantIdentity(creatorProxy).primaryWallet();
+        address recovered = _recoverSignerFromMemory(ethHash, grant.signature);
+
+        return (recovered == currentPrimary, grant.derivationPaths);
+    }
+
+    function _recoverSignerFromMemory(bytes32 ethSignedHash, bytes memory sig) internal pure returns (address) {
+        if (sig.length != 65) return address(0);
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+            v := byte(0, mload(add(sig, 96)))
+        }
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return address(0);
+        return ecrecover(ethSignedHash, v, r, s);
     }
 
     function _recoverSigner(bytes32 ethSignedHash, bytes calldata sig) internal pure returns (address) {

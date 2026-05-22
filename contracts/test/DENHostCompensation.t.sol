@@ -173,7 +173,7 @@ contract DENHostCompensationTest is Test {
         // Carol's instance: instanceSize=50 (micro bracket), 1 GB storage, 5 GB bandwidth.
         // formula = 1*3e14 + 5*4e14 = 3e14 + 20e14 = 23e14
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 1, 5, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 1, 5, 50, 1);
 
         uint256 expectedClaim = 1 * 3e14 + 5 * 4e14; // 2.3e15
         assertLe(expectedClaim, FEE, "test setup: formula must be <= fee pool");
@@ -189,7 +189,7 @@ contract DENHostCompensationTest is Test {
 
         // 0 GB storage and bandwidth → formula = 0 → hoster claim = 0 → full pool is surplus.
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50, 1);
 
         assertEq(alice.balance, aliceBalanceBefore + FEE);
         assertEq(compensation.getFeePool(aliceProxy, address(0)), 0);
@@ -203,7 +203,7 @@ contract DENHostCompensationTest is Test {
 
         // 1000 GB storage: formula >> fee pool; cap activates.
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 1000, 1000, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 1000, 1000, 50, 1);
 
         // Hoster receives the entire fee pool; no surplus.
         assertEq(carol.balance, carolBalanceBefore + FEE);
@@ -215,7 +215,7 @@ contract DENHostCompensationTest is Test {
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
 
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50, 1);
 
         assertEq(compensation.getFeePool(aliceProxy, address(0)), 0);
     }
@@ -223,7 +223,7 @@ contract DENHostCompensationTest is Test {
     function test_NothingToClaimReverts() public {
         vm.prank(carol);
         vm.expectRevert("Nothing to claim");
-        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50, 1);
     }
 
     // --- Authorization ---
@@ -235,7 +235,7 @@ contract DENHostCompensationTest is Test {
         // Bob is not the content operator.
         vm.prank(bob);
         vm.expectRevert("Not content operator");
-        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50, 1);
     }
 
     function test_UnregisteredCannotClaim() public {
@@ -245,7 +245,7 @@ contract DENHostCompensationTest is Test {
 
         vm.prank(stranger);
         vm.expectRevert("Not registered");
-        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50, 1);
     }
 
     // --- Progressive bracket rates ---
@@ -261,7 +261,7 @@ contract DENHostCompensationTest is Test {
         // instanceSize = 50 (micro, <80). 2 GB storage, 3 GB bandwidth.
         // formula = 2*3e14 + 3*4e14 = 6e14 + 12e14 = 18e14
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 50, 1);
 
         uint256 expectedClaim = 2 * 3e14 + 3 * 4e14;
         assertEq(carol.balance, carolBefore + expectedClaim);
@@ -277,7 +277,7 @@ contract DENHostCompensationTest is Test {
         // instanceSize = 100 (small, 80–200). 2 GB storage, 3 GB bandwidth.
         // formula = 2*225000000000000 + 3*3e14 = 4.5e14 + 9e14 = 13.5e14
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 100);
+        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 100, 1);
 
         uint256 expectedClaim = 2 * 225000000000000 + 3 * 3e14;
         assertEq(carol.balance, carolBefore + expectedClaim);
@@ -292,7 +292,7 @@ contract DENHostCompensationTest is Test {
         // instanceSize = 300 (medium, 200–500). 2 GB storage, 3 GB bandwidth.
         // formula = 2*15e13 + 3*2e14 = 3e14 + 6e14 = 9e14
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 300);
+        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 300, 1);
 
         uint256 expectedClaim = 2 * 15e13 + 3 * 2e14;
         assertEq(carol.balance, carolBefore + expectedClaim);
@@ -307,7 +307,7 @@ contract DENHostCompensationTest is Test {
         // instanceSize = 600 (large, 500+). 2 GB storage, 3 GB bandwidth.
         // formula = 2*23e13 + 3*345000000000000 = 4.6e14 + 10.35e14 = 14.95e14
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 600);
+        compensation.claimCompensation(aliceProxy, address(0), 2, 3, 600, 1);
 
         uint256 expectedClaim = 2 * 23e13 + 3 * 345000000000000;
         assertEq(carol.balance, carolBefore + expectedClaim);
@@ -321,38 +321,36 @@ contract DENHostCompensationTest is Test {
         uint256 aliceBefore = alice.balance;
 
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 100, 100, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 100, 100, 50, 1);
 
         assertEq(alice.balance, aliceBefore + FEE);
     }
 
-    // --- Storage compensation threshold ---
+    // --- Storage compensation threshold (spec §7.2) ---
+    // Declared-plus-auditable model: hoster declares subscriberCount; must be >= 1.
+    // Spec gap: on-chain enumeration of active subscribers is not gas-practical — declared
+    // count is emitted for community audit, consistent with §7.3 bandwidth model.
 
-    function test_StorageThresholdBlocksStaleClaim() public {
+    function test_ZeroSubscriberCountBlocksStorageClaim() public {
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
 
-        // Jump past the 90-day lookback window.
-        vm.warp(block.timestamp + 91 days);
-
         vm.prank(carol);
-        vm.expectRevert("No recent subscriber activity");
-        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50);
+        vm.expectRevert("Storage compensation threshold: no verified active subscribers");
+        compensation.claimCompensation(aliceProxy, address(0), 1, 1, 50, 0);
     }
 
-    function test_RecentActivityPassesThreshold() public {
+    function test_NonZeroSubscriberCountPassesThreshold() public {
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
 
-        vm.warp(block.timestamp + 89 days);
-
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50);
-        // Claim succeeds (no revert). Full pool is surplus.
+        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50, 1);
+        // Claim succeeds. Full pool is surplus.
         assertEq(compensation.getFeePool(aliceProxy, address(0)), 0);
     }
 
-    function test_MigrationWindowBypassesThreshold() public {
+    function test_MigrationWindowBypassesSubscriberCountThreshold() public {
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
 
@@ -362,12 +360,9 @@ contract DENHostCompensationTest is Test {
         vm.prank(carol); contentRegistry.issueSunsetNotice(fp);
         assertTrue(contentRegistry.hasActiveSunset(aliceProxy));
 
-        // Jump past the lookback window.
-        vm.warp(block.timestamp + 91 days);
-
-        // Threshold is bypassed because creator is in migration window.
+        // subscriberCount = 0 but threshold is bypassed because creator is in migration window.
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50, 0);
         assertEq(compensation.getFeePool(aliceProxy, address(0)), 0);
     }
 
@@ -407,7 +402,7 @@ contract DENHostCompensationTest is Test {
 
         // 0 GB → claim = 0 → full surplus to alice.
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(token), 0, 0, 50);
+        compensation.claimCompensation(aliceProxy, address(token), 0, 0, 50, 1);
 
         assertEq(token.balanceOf(carol), carolTokenBefore);
         assertEq(token.balanceOf(alice), aliceTokenBefore + pool);
@@ -443,8 +438,8 @@ contract DENHostCompensationTest is Test {
 
         vm.prank(carol);
         vm.expectEmit(true, true, true, true);
-        emit IDENHostCompensation.CompensationClaimed(carolProxy, aliceProxy, address(0), expectedClaim, expectedSurplus, 50);
-        compensation.claimCompensation(aliceProxy, address(0), 1, 5, 50);
+        emit IDENHostCompensation.CompensationClaimed(carolProxy, aliceProxy, address(0), expectedClaim, expectedSurplus, 50, 1);
+        compensation.claimCompensation(aliceProxy, address(0), 1, 5, 50, 1);
     }
 
     // --- Surplus goes to current wallet after rotation ---
@@ -468,7 +463,7 @@ contract DENHostCompensationTest is Test {
 
         // Claim with 0 GB — full pool is surplus, goes to alice2 (current primary wallet).
         vm.prank(carol);
-        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50);
+        compensation.claimCompensation(aliceProxy, address(0), 0, 0, 50, 1);
 
         assertEq(alice2.balance, alice2Before + FEE);
         assertEq(alice.balance,  aliceBefore);

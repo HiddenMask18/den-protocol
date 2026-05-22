@@ -31,6 +31,12 @@ contract DENSubscription is IDENSubscription {
     // subscriberProxy => creatorProxy => tierId => expiry timestamp
     mapping(address => mapping(address => mapping(uint256 => uint256))) private _subscriptions;
 
+    // subscriberProxy => creatorProxy => tierId => start of the current subscription period.
+    // Set when first subscribing or after a lapse. NOT updated on renewals (while still active).
+    // Enables report filing to verify subscription was active at the claimed access time (spec §12.2).
+    // Spec gap: only the current period is tracked; prior lapsed periods are lost on re-subscribe.
+    mapping(address => mapping(address => mapping(uint256 => uint256))) private _subscriptionStart;
+
     // creatorProxy => token => claimable escrow balance
     mapping(address => mapping(address => uint256)) private _escrow;
 
@@ -120,7 +126,11 @@ contract DENSubscription is IDENSubscription {
         uint256 start = block.timestamp;
         uint256 currentExpiry = _subscriptions[subscriberProxy][creatorProxy][tierId];
         if (currentExpiry > block.timestamp) {
+            // Active renewal: extend from current expiry. Preserve _subscriptionStart.
             start = currentExpiry;
+        } else {
+            // New subscription or re-subscribe after lapse: record current period start.
+            _subscriptionStart[subscriberProxy][creatorProxy][tierId] = block.timestamp;
         }
 
         uint256 expiry = start + tier.duration;
@@ -147,6 +157,14 @@ contract DENSubscription is IDENSubscription {
         uint256 tierId
     ) external view returns (uint256) {
         return _subscriptions[subscriberProxy][creatorProxy][tierId];
+    }
+
+    function getSubscriptionStart(
+        address subscriberProxy,
+        address creatorProxy,
+        uint256 tierId
+    ) external view returns (uint256) {
+        return _subscriptionStart[subscriberProxy][creatorProxy][tierId];
     }
 
     function getTierDuration(address creatorProxy, uint256 tierId) external view returns (uint256) {

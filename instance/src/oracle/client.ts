@@ -34,16 +34,34 @@ export class OracleError extends Error {
   }
 }
 
-// 5-minute cache keyed by creatorProxy (lowercase).
-// creator_share is the same for all tiers of a creator — keying by creatorProxy is sufficient.
+// 5-minute cache keyed by (creatorProxy, subscriberProxy/buyerProxy, tierId/listingId).
+//
+// creator_share is cryptographically the same for all tiers of a creator, but the oracle
+// performs an independent per-request entitlement check — it verifies that THIS subscriber
+// holds THIS specific tier before returning the share. Caching by creatorProxy alone would
+// allow a cached response from subscriber A to serve subscriber B without an oracle check,
+// bypassing the oracle's authorization entirely.
+//
+// Spec gap (§4.1): the spec says "oracle offline immediately prevents new key derivations."
+// Strict compliance requires zero caching — any TTL creates a bounded window (5 min max)
+// where cached entries survive after the oracle goes offline. The per-entitlement key
+// minimizes blast radius: only subscribers who made a recent successful request are affected,
+// and only for that specific creator+tier combination.
 type CacheEntry = { share: Uint8Array; expiresAt: number };
 const shareCache = new Map<string, CacheEntry>();
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const ORACLE_TIMEOUT_MS = 10_000;    // 10 seconds — oracle should respond quickly
 
-function getCached(creatorProxy: string): Uint8Array | null {
-  const key = creatorProxy.toLowerCase();
+function cacheKey(request: OracleRequest): string {
+  if (request.type === 'subscription') {
+    return `${request.creatorProxy.toLowerCase()}:${request.subscriberProxy.toLowerCase()}:${request.tierId}`;
+  }
+  return `${request.creatorProxy.toLowerCase()}:${request.buyerProxy.toLowerCase()}:${request.listingId}`;
+}
+
+function getCached(request: OracleRequest): Uint8Array | null {
+  const key = cacheKey(request);
   const entry = shareCache.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
@@ -53,8 +71,8 @@ function getCached(creatorProxy: string): Uint8Array | null {
   return entry.share;
 }
 
-function setCache(creatorProxy: string, share: Uint8Array): void {
-  shareCache.set(creatorProxy.toLowerCase(), {
+function setCache(request: OracleRequest, share: Uint8Array): void {
+  shareCache.set(cacheKey(request), {
     share,
     expiresAt: Date.now() + CACHE_TTL_MS,
   });
@@ -68,7 +86,7 @@ export async function fetchCreatorShare(
   oracleUrl: string,
   request: OracleRequest,
 ): Promise<Uint8Array> {
-  const cached = getCached(request.creatorProxy);
+  const cached = getCached(request);
   if (cached) return cached;
 
   let response: Response;
@@ -122,6 +140,6 @@ export async function fetchCreatorShare(
     );
   }
 
-  setCache(request.creatorProxy, shareBytes);
+  setCache(request, shareBytes);
   return shareBytes;
 }

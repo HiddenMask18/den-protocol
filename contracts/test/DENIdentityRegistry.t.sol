@@ -489,6 +489,46 @@ contract DENIdentityRegistryTest is Test {
         assertFalse(registry.isRegisteredProxy(makeAddr("unknown")));
     }
 
+    // BUG-09: A proxy must be able to reclaim its own old handle during the alias retention
+    // window. Before the fix, the alias check did not exempt the owning proxy, so returning
+    // to a previous handle would revert with "Handle reserved as alias by another participant".
+
+    function test_ProxyCanReclaimOwnHandleDuringAliasWindow() public {
+        vm.prank(alice);
+        registry.register();
+        address proxy = registry.getProxy(alice);
+
+        vm.prank(alice);
+        registry.setHandle("vixenart");
+
+        vm.prank(alice);
+        registry.setHandle("vixenart_new");
+
+        // Within the alias retention window, alice can switch back to "vixenart".
+        vm.prank(alice);
+        registry.setHandle("vixenart");
+        assertEq(registry.handleOf(proxy), "vixenart");
+    }
+
+    function test_OtherProxyCannotUseActiveAlias() public {
+        vm.prank(alice);
+        registry.register();
+
+        vm.prank(alice);
+        registry.setHandle("vixenart");
+
+        vm.prank(alice);
+        registry.setHandle("vixenart_new");
+
+        // "vixenart" is alice's active alias — bob cannot claim it within the retention window.
+        vm.prank(bob);
+        registry.register();
+
+        vm.prank(bob);
+        vm.expectRevert("Handle reserved as alias by another participant");
+        registry.setHandle("vixenart");
+    }
+
     function test_IsRegisteredProxy_StaysValidAfterWalletSync() public {
         vm.prank(alice);
         registry.register();

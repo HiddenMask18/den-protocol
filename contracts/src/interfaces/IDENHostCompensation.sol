@@ -13,14 +13,16 @@ interface IDENHostCompensation {
 
     event FeeDeposited(address indexed creatorProxy, address indexed token, uint256 amount);
 
-    // instanceSize is declared by the hoster and emitted for on-chain audit (spec §7.3 declared-plus-auditable).
+    // instanceSize and subscriberCount are declared by the hoster and emitted for on-chain audit
+    // (spec §7.3 declared-plus-auditable). Systematic overclaiming is detectable via anomaly analysis.
     event CompensationClaimed(
         address indexed hosterProxy,
         address indexed creatorProxy,
         address indexed token,
         uint256 hosterClaim,
         uint256 creatorSurplus,
-        uint256 instanceSize
+        uint256 instanceSize,
+        uint256 subscriberCount
     );
 
     // Called by subscription and purchase contracts to deposit the protocol fee into the
@@ -30,14 +32,20 @@ interface IDENHostCompensation {
 
     // Called by the registered content operator (hoster) to claim resource compensation and
     // return any surplus to the creator. Uses the progressive rate formula (spec §7.2, §13.2).
-    // storageGB and bandwidthGB are declared by the hoster (declared-plus-auditable, spec §7.3).
+    // storageGB, bandwidthGB, instanceSize, and subscriberCount are declared by the hoster
+    // (declared-plus-auditable, spec §7.3). All four are emitted for community audit.
+    // subscriberCount: verified active subscribers for this creator on this instance within the
+    // storage_compensation_lookback window. Must be >= 1 to claim storage compensation (spec §7.2).
+    // Spec gap: on-chain enumeration of active subscribers is not gas-practical; declared-plus-
+    // auditable is the correct model per §7.3 (same as bandwidth).
     // instanceSize = creator_count + subscription_relationship_count, same-instance excluded (spec §9.3).
     function claimCompensation(
         address creatorProxy,
         address token,
         uint256 storageGB,
         uint256 bandwidthGB,
-        uint256 instanceSize
+        uint256 instanceSize,
+        uint256 subscriberCount
     ) external;
 
     // One-time wiring — owner only.
@@ -49,6 +57,5 @@ interface IDENHostCompensation {
     function setTokenRates(address token, BracketRates[4] calldata rates) external;
 
     function getFeePool(address creatorProxy, address token) external view returns (uint256);
-    function getLastFeeTimestamp(address creatorProxy, address token) external view returns (uint256);
     function getTokenRates(address token) external view returns (BracketRates[4] memory);
 }

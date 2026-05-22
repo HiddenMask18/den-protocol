@@ -25,13 +25,16 @@ type SessionEnv = {
 export const hosterRoutes = new Hono<SessionEnv>();
 
 // Claim resource compensation for one creator.
-// Body: { creatorProxy, token?, storageGB, bandwidthGB, instanceSize }
-//   creatorProxy  — the creator's DEN proxy address
-//   token         — ERC-20 token address, or omit/null for native ETH
-//   storageGB     — declared storage consumed in GB (non-negative integer)
-//   bandwidthGB   — declared bandwidth served in GB (non-negative integer)
-//   instanceSize  — declared instance size = creator_count + subscription_relationship_count,
-//                   same-instance relationships excluded (spec §9.3)
+// Body: { creatorProxy, token?, storageGB, bandwidthGB, instanceSize, subscriberCount }
+//   creatorProxy    — the creator's DEN proxy address
+//   token           — ERC-20 token address, or omit/null for native ETH
+//   storageGB       — declared storage consumed in GB (non-negative integer)
+//   bandwidthGB     — declared bandwidth served in GB (non-negative integer)
+//   instanceSize    — declared instance size = creator_count + subscription_relationship_count,
+//                     same-instance relationships excluded (spec §9.3)
+//   subscriberCount — declared verified active subscribers for this creator on this instance
+//                     within the storage_compensation_lookback window. Must be >= 1 to claim
+//                     storage compensation (spec §7.2 declared-plus-auditable model).
 hosterRoutes.post('/claim', requireAuth, async (c) => {
   const sessionWallet = c.get('wallet');
   if (sessionWallet.toLowerCase() !== operatorAccount.address.toLowerCase()) {
@@ -41,7 +44,7 @@ hosterRoutes.post('/claim', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ error: 'invalid JSON body' }, 400);
 
-  const { creatorProxy, token, storageGB, bandwidthGB, instanceSize } = body;
+  const { creatorProxy, token, storageGB, bandwidthGB, instanceSize, subscriberCount } = body;
 
   if (!creatorProxy || !isAddress(creatorProxy)) {
     return c.json({ error: 'invalid creatorProxy' }, 400);
@@ -58,6 +61,9 @@ hosterRoutes.post('/claim', requireAuth, async (c) => {
   }
   if (typeof instanceSize !== 'number' || !Number.isInteger(instanceSize) || instanceSize < 0) {
     return c.json({ error: 'instanceSize must be a non-negative integer' }, 400);
+  }
+  if (typeof subscriberCount !== 'number' || !Number.isInteger(subscriberCount) || subscriberCount < 0) {
+    return c.json({ error: 'subscriberCount must be a non-negative integer' }, 400);
   }
 
   // Pre-check fee pool to catch the empty-pool case before spending gas.
@@ -76,6 +82,7 @@ hosterRoutes.post('/claim', requireAuth, async (c) => {
       BigInt(storageGB),
       BigInt(bandwidthGB),
       BigInt(instanceSize),
+      BigInt(subscriberCount),
     ],
   });
 

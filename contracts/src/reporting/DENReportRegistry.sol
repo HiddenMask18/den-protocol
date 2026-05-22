@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENSubscription.sol";
+import "../interfaces/IDENPurchaseState.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENReportRegistry.sol";
 
@@ -16,6 +17,7 @@ contract DENReportRegistry is IDENReportRegistry {
     address private _owner;
     IDENIdentity private _identity;
     IDENSubscription private _subscription;
+    IDENPurchaseState private _purchaseState;
     IDENContentRegistry private _contentRegistry;
 
     // Option B governance placeholder (spec §12.2).
@@ -47,13 +49,15 @@ contract DENReportRegistry is IDENReportRegistry {
     // Written to chain permanently; used by instances to enforce subscriber consequences.
     mapping(address => uint256) private _falseReportCount;
 
-    constructor(address identityRegistry, address subscriptionContract, address contentRegistry) {
+    constructor(address identityRegistry, address subscriptionContract, address purchaseContract, address contentRegistry) {
         require(identityRegistry != address(0), "Zero address");
         require(subscriptionContract != address(0), "Zero address");
+        require(purchaseContract != address(0), "Zero address");
         require(contentRegistry != address(0), "Zero address");
         _owner = msg.sender;
         _identity = IDENIdentity(identityRegistry);
         _subscription = IDENSubscription(subscriptionContract);
+        _purchaseState = IDENPurchaseState(purchaseContract);
         _contentRegistry = IDENContentRegistry(contentRegistry);
     }
 
@@ -91,12 +95,23 @@ contract DENReportRegistry is IDENReportRegistry {
             "Content not reportable"
         );
 
-        // Reporter must have held an active subscription at the claimed access time (spec §12.2).
-        // getSubscriptionExpiry returns 0 for wallets that never subscribed — check fails correctly.
-        uint256 expiry = _subscription.getSubscriptionExpiry(
-            reporterProxy, content.creatorProxy, content.tierId
-        );
-        require(expiry >= accessTimestamp, "No subscription at claimed access time");
+        // Reporter must have had plaintext access at the claimed access time (spec §12.2).
+        // Two valid access paths: active subscription or permanent purchase.
+        //
+        // Subscription check: start <= accessTimestamp <= expiry.
+        // getSubscriptionStart returns the start of the CURRENT subscription period (0 if never subscribed).
+        // Spec gap (§12.2): a subscriber who lapsed and re-subscribed loses the ability to report content
+        // they accessed during a prior subscription period — only the current period's start is on-chain.
+        uint256 subExpiry = _subscription.getSubscriptionExpiry(reporterProxy, content.creatorProxy, content.tierId);
+        uint256 subStart  = _subscription.getSubscriptionStart(reporterProxy, content.creatorProxy, content.tierId);
+        bool hasSubscriptionAccess = subStart > 0 && subStart <= accessTimestamp && subExpiry >= accessTimestamp;
+
+        // Purchase check: purchasedAt <= accessTimestamp (permanent access once purchased).
+        // content.tierId doubles as listingId for purchase-based content (same on-chain namespace).
+        uint256 purchasedAt = _purchaseState.getPurchaseTimestamp(reporterProxy, content.creatorProxy, content.tierId);
+        bool hasPurchaseAccess = purchasedAt > 0 && purchasedAt <= accessTimestamp;
+
+        require(hasSubscriptionAccess || hasPurchaseAccess, "No verified access at claimed access time");
 
         // Auto-detect operator conflict: reporter proxy is the registered content operator (spec §12.2).
         // The "different wallet, demonstrable relationship" case is not detectable on-chain — V1 limitation.
@@ -138,11 +153,14 @@ contract DENReportRegistry is IDENReportRegistry {
             "Invalid outcome"
         );
 
-        // CSAM cannot be dismissed or false-flagged: the protocol does not conduct independent
-        // adjudication of CSAM claims (spec §12.5). Use reinstateAfterCsamExpiry for no-action cases.
-        if (report.category == ViolationCategory.CSAM) {
-            require(outcome == ReportStatus.Upheld, "CSAM: use reinstateAfterCsamExpiry for no-action cases");
-        }
+        // CSAM cannot be internally adjudicated at all (spec §12.5): "the protocol does not
+        // conduct independent adjudication — this is a legal matter handled by the appropriate
+        // authorities." Upheld is equally prohibited — use reinstateAfterCsamExpiry after the
+        // suspension window, or setLawEnforcementHold to extend it.
+        require(
+            report.category != ViolationCategory.CSAM,
+            "CSAM reports cannot be internally adjudicated: use reinstateAfterCsamExpiry or setLawEnforcementHold"
+        );
 
         IDENContentRegistry.ContentRecord memory content = _contentRegistry.getContent(report.fingerprint);
         address operatorProxy = _contentRegistry.getContentOperator(content.creatorProxy);

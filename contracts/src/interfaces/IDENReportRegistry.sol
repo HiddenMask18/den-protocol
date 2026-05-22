@@ -56,7 +56,9 @@ interface IDENReportRegistry {
     event FalseReportFlagged(uint256 indexed reportId, address indexed reporterProxy, uint256 falseReportCount);
 
     // File a protocol floor violation report.
-    // Reporter must be registered and have held an active subscription at accessTimestamp (spec §12.2).
+    // Reporter must be registered and have had plaintext access at accessTimestamp (spec §12.2):
+    //   - Active subscription: start <= accessTimestamp <= expiry
+    //   - Permanent purchase: purchasedAt <= accessTimestamp
     // Content is suspended immediately on the first valid report against a fingerprint (spec §12.3).
     // Operator-reporter conflicts are auto-detected and flagged; those reports require governance resolution.
     function fileReport(
@@ -68,7 +70,8 @@ interface IDENReportRegistry {
 
     // Determine an active, non-conflicted report. Caller must be the registered content operator.
     // outcome must be Upheld, Dismissed, or FalseReport.
-    // CSAM reports cannot be Dismissed or FalseReport — use reinstateAfterCsamExpiry for no-action cases.
+    // CSAM reports cannot be internally adjudicated at all (spec §12.5) — use reinstateAfterCsamExpiry
+    // for no-action cases after the suspension period.
     // Conflicted reports (operatorConflict = true) require governance resolution via the governance address.
     function determineReport(uint256 reportId, ReportStatus outcome) external;
 

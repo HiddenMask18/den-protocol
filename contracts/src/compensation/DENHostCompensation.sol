@@ -36,8 +36,7 @@ contract DENHostCompensation is IDENHostCompensation {
     // creatorProxy => token => accumulated protocol fee available for hoster claim
     mapping(address => mapping(address => uint256)) private _feePool;
 
-    // creatorProxy => token => timestamp of last depositFee call
-    // Used for storage compensation threshold check (spec §7.2).
+    // creatorProxy => token => timestamp of last depositFee call (informational; not used for threshold check).
     mapping(address => mapping(address => uint256)) private _lastFeeTimestamp;
 
     constructor(address identityRegistry, address contentRegistry) {
@@ -94,7 +93,8 @@ contract DENHostCompensation is IDENHostCompensation {
         address token,
         uint256 storageGB,
         uint256 bandwidthGB,
-        uint256 instanceSize
+        uint256 instanceSize,
+        uint256 subscriberCount
     ) external {
         // Caller must be the registered content operator for this creator.
         address hosterProxy = _identity.getProxy(msg.sender);
@@ -106,15 +106,14 @@ contract DENHostCompensation is IDENHostCompensation {
         uint256 pool = _feePool[creatorProxy][token];
         require(pool > 0, "Nothing to claim");
 
-        // Storage compensation threshold: hoster cannot claim if no subscriber activity within lookback
-        // window. Exempted during active migration (active sunset = migration window, spec §7.2).
+        // Storage compensation threshold (spec §7.2): hoster cannot claim storage compensation if
+        // the creator has had zero verified active subscribers within the lookback window.
+        // Exempted during active migration (active sunset = migration window, spec §7.2).
+        // Spec gap: on-chain enumeration of all subscribers is not gas-practical; subscriberCount
+        // is declared by the hoster and emitted for community audit (declared-plus-auditable,
+        // consistent with §7.3 bandwidth model). Systematic false claims are detectable on-chain.
         if (!_contentRegistry.hasActiveSunset(creatorProxy)) {
-            uint256 lastActivity = _lastFeeTimestamp[creatorProxy][token];
-            require(
-                lastActivity != 0 &&
-                block.timestamp - lastActivity <= STORAGE_COMPENSATION_LOOKBACK,
-                "No recent subscriber activity"
-            );
+            require(subscriberCount > 0, "Storage compensation threshold: no verified active subscribers");
         }
 
         // Progressive rate formula (spec §13.2): hoster_claim = min(formula, fee_pool).
@@ -126,7 +125,7 @@ contract DENHostCompensation is IDENHostCompensation {
         // Zero pool before transfers (checks-effects-interactions).
         _feePool[creatorProxy][token] = 0;
 
-        emit CompensationClaimed(hosterProxy, creatorProxy, token, hosterClaim, creatorSurplus, instanceSize);
+        emit CompensationClaimed(hosterProxy, creatorProxy, token, hosterClaim, creatorSurplus, instanceSize, subscriberCount);
 
         if (hosterClaim > 0) {
             _transfer(token, msg.sender, hosterClaim);
@@ -144,10 +143,6 @@ contract DENHostCompensation is IDENHostCompensation {
 
     function getFeePool(address creatorProxy, address token) external view returns (uint256) {
         return _feePool[creatorProxy][token];
-    }
-
-    function getLastFeeTimestamp(address creatorProxy, address token) external view returns (uint256) {
-        return _lastFeeTimestamp[creatorProxy][token];
     }
 
     function getTokenRates(address token) external view returns (BracketRates[4] memory) {

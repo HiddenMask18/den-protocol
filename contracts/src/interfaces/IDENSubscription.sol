@@ -9,6 +9,11 @@ interface IDENSubscription {
     function subscribe(address creatorProxy, uint256 tierId) external payable;
     function isSubscribed(address subscriberProxy, address creatorProxy, uint256 tierId) external view returns (bool);
     function getSubscriptionExpiry(address subscriberProxy, address creatorProxy, uint256 tierId) external view returns (uint256);
+    // Returns the start of the subscriber's current subscription period (0 if never subscribed).
+    // Set when first subscribing or after a lapse; preserved on renewals while the subscription
+    // is still active. Enables fileReport to check subscription was active at claimed access time.
+    // Spec gap (§12.2): covers only the current period; prior lapsed periods are not recoverable.
+    function getSubscriptionStart(address subscriberProxy, address creatorProxy, uint256 tierId) external view returns (uint256);
     function getTierDuration(address creatorProxy, uint256 tierId) external view returns (uint256);
     function getTierToken(address creatorProxy, uint256 tierId) external view returns (address);
     // Returns the highest subscription expiry ever recorded for this creator+tier across all subscribers.

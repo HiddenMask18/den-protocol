@@ -72,13 +72,7 @@ contract DENPurchaseState is IDENPurchaseState {
         require(buyerProxy != address(0), "Buyer not registered");
         require(_identity.isRegisteredProxy(creatorProxy), "Creator proxy not registered");
 
-        if (_contentRegistry != address(0)) {
-            require(
-                !IDENContentRegistry(_contentRegistry).hasActiveSunset(creatorProxy),
-                "Creator has active sunset notice"
-            );
-        }
-
+        // Spec §5.6 restricts new subscriptions during sunset — purchases are not restricted.
         Listing memory listing = _listings[creatorProxy][listingId];
         require(listing.exists, "Listing does not exist");
         require(_purchases[buyerProxy][creatorProxy][listingId] == 0, "Already purchased");

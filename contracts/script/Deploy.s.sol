@@ -104,6 +104,7 @@ contract DeployDEN is Script {
         DENReportRegistry reportRegistry = new DENReportRegistry(
             address(registry),
             address(subscription),
+            address(purchaseState),
             address(contentRegistry)
         );
 

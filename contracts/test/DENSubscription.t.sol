@@ -419,6 +419,49 @@ contract DENSubscriptionTest is Test {
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
     }
 
+    // --- getSubscriptionStart ---
+    // Tracks the start of the current uninterrupted subscription period.
+    // Used by DENReportRegistry to verify a reporter had access at the claimed timestamp.
+
+    function test_SubscriptionStartZeroBeforeSubscribe() public {
+        assertEq(subscription.getSubscriptionStart(bobProxy, aliceProxy, TIER_ID), 0);
+    }
+
+    function test_SubscriptionStartSetOnFirstSubscribe() public {
+        uint256 t = block.timestamp;
+        vm.prank(bob);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+        assertEq(subscription.getSubscriptionStart(bobProxy, aliceProxy, TIER_ID), t);
+    }
+
+    function test_SubscriptionStartPreservedOnRenewal() public {
+        uint256 t = block.timestamp;
+        vm.prank(bob);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+
+        // Renew before expiry — start must not change.
+        vm.warp(block.timestamp + DURATION / 2);
+        vm.deal(bob, 10 ether);
+        vm.prank(bob);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+
+        assertEq(subscription.getSubscriptionStart(bobProxy, aliceProxy, TIER_ID), t);
+    }
+
+    function test_SubscriptionStartResetAfterLapse() public {
+        vm.prank(bob);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+
+        // Let the subscription lapse, then re-subscribe.
+        vm.warp(block.timestamp + DURATION + 1);
+        uint256 t2 = block.timestamp;
+        vm.deal(bob, 10 ether);
+        vm.prank(bob);
+        subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+
+        assertEq(subscription.getSubscriptionStart(bobProxy, aliceProxy, TIER_ID), t2);
+    }
+
     function test_SubscriptionSurvivesSubscriberWalletRotation() public {
         vm.prank(bob);
         subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);

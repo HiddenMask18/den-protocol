@@ -74,11 +74,14 @@ contract DENIdentityRegistry is IDENIdentity {
 
         bytes32 newHash = keccak256(bytes(newHandle));
         require(_proxyByHandle[newHash] == address(0), "Handle taken");
-        // Also reject if taken by an active alias
+        // Reject if taken by an active alias belonging to a different proxy.
+        // Spec §2.5.9: "MUST NOT be registered by another participant" — the same proxy
+        // reclaiming its own old handle during the alias window is explicitly permitted.
         require(
             _handleAliases[newHash].proxy == address(0) ||
-            _handleAliases[newHash].expiresAt < block.timestamp,
-            "Handle reserved as alias"
+            _handleAliases[newHash].expiresAt < block.timestamp ||
+            _handleAliases[newHash].proxy == proxy,
+            "Handle reserved as alias by another participant"
         );
 
         string memory currentHandle = _currentHandleOf[proxy];

@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import "../src/identity/DENIdentityImpl.sol";
 import "../src/identity/DENIdentityRegistry.sol";
 import "../src/subscription/DENSubscription.sol";
+import "../src/purchase/DENPurchaseState.sol";
 import "../src/content/DENContentRegistry.sol";
 import "../src/reporting/DENReportRegistry.sol";
 import "../src/interfaces/IDENReportRegistry.sol";
@@ -13,6 +14,7 @@ contract DENReportRegistryTest is Test {
     DENIdentityImpl      impl;
     DENIdentityRegistry  registry;
     DENSubscription      subscription;
+    DENPurchaseState     purchaseState;
     DENContentRegistry   contentRegistry;
     DENReportRegistry    reportRegistry;
 
@@ -43,8 +45,9 @@ contract DENReportRegistryTest is Test {
         impl             = new DENIdentityImpl();
         registry         = new DENIdentityRegistry(address(impl));
         subscription     = new DENSubscription(address(registry));
+        purchaseState    = new DENPurchaseState(address(registry));
         contentRegistry  = new DENContentRegistry(address(registry), address(subscription));
-        reportRegistry   = new DENReportRegistry(address(registry), address(subscription), address(contentRegistry));
+        reportRegistry   = new DENReportRegistry(address(registry), address(subscription), address(purchaseState), address(contentRegistry));
 
         subscription.setContentRegistry(address(contentRegistry));
 
@@ -137,7 +140,7 @@ contract DENReportRegistryTest is Test {
     function test_UnsubscribedCannotReport() public {
         // Carol is registered but never subscribed — expiry == 0
         vm.prank(carol);
-        vm.expectRevert("No subscription at claimed access time");
+        vm.expectRevert("No verified access at claimed access time");
         reportRegistry.fileReport(FP1, block.timestamp, IDENReportRegistry.ViolationCategory.NON_CONSENT, EVIDENCE);
     }
 
@@ -209,7 +212,7 @@ contract DENReportRegistryTest is Test {
         vm.warp(block.timestamp + DURATION + 1);
         // Eve's subscription is expired. She claims she accessed at a timestamp AFTER her expiry.
         vm.prank(eve);
-        vm.expectRevert("No subscription at claimed access time");
+        vm.expectRevert("No verified access at claimed access time");
         reportRegistry.fileReport(
             FP1,
             block.timestamp,  // after her expiry
@@ -461,7 +464,7 @@ contract DENReportRegistryTest is Test {
         uint256 id = reportRegistry.fileReport(FP1, block.timestamp, IDENReportRegistry.ViolationCategory.CSAM, EVIDENCE);
 
         vm.prank(instanceOp);
-        vm.expectRevert("CSAM: use reinstateAfterCsamExpiry for no-action cases");
+        vm.expectRevert("CSAM reports cannot be internally adjudicated: use reinstateAfterCsamExpiry or setLawEnforcementHold");
         reportRegistry.determineReport(id, IDENReportRegistry.ReportStatus.Dismissed);
     }
 
@@ -470,19 +473,69 @@ contract DENReportRegistryTest is Test {
         uint256 id = reportRegistry.fileReport(FP1, block.timestamp, IDENReportRegistry.ViolationCategory.CSAM, EVIDENCE);
 
         vm.prank(instanceOp);
-        vm.expectRevert("CSAM: use reinstateAfterCsamExpiry for no-action cases");
+        vm.expectRevert("CSAM reports cannot be internally adjudicated: use reinstateAfterCsamExpiry or setLawEnforcementHold");
         reportRegistry.determineReport(id, IDENReportRegistry.ReportStatus.FalseReport);
     }
 
-    function test_CsamCanBeUpheld() public {
+    function test_CsamCannotBeUpheld() public {
+        // Spec §12.5: CSAM cannot be internally adjudicated at all — Upheld is equally prohibited.
         vm.prank(bob);
         uint256 id = reportRegistry.fileReport(FP1, block.timestamp, IDENReportRegistry.ViolationCategory.CSAM, EVIDENCE);
 
         vm.prank(instanceOp);
+        vm.expectRevert("CSAM reports cannot be internally adjudicated: use reinstateAfterCsamExpiry or setLawEnforcementHold");
         reportRegistry.determineReport(id, IDENReportRegistry.ReportStatus.Upheld);
 
-        assertEq(uint256(reportRegistry.getReport(id).status), uint256(IDENReportRegistry.ReportStatus.Upheld));
+        // Status stays Active; content remains suspended via the active report count.
+        assertEq(uint256(reportRegistry.getReport(id).status), uint256(IDENReportRegistry.ReportStatus.Active));
         assertTrue(reportRegistry.isSuspended(FP1));
+    }
+
+    function test_ReporterClaimsAccessBeforeSubscriptionStartReverts() public {
+        // Spec §12.2: reporter must have had plaintext access at the claimed timestamp.
+        // Warp to t=100 before subscribing — subscription start is recorded as t=100.
+        vm.warp(100);
+        address eve = makeAddr("eve");
+        vm.prank(eve); registry.register();
+        vm.deal(eve, PRICE);
+        vm.prank(eve); subscription.subscribe{value: PRICE}(aliceProxy, TIER_ID);
+
+        // Eve claims she accessed content at t=50 — before her subscription started at t=100.
+        vm.prank(eve);
+        vm.expectRevert("No verified access at claimed access time");
+        reportRegistry.fileReport(FP1, 50, IDENReportRegistry.ViolationCategory.NON_CONSENT, EVIDENCE);
+    }
+
+    function test_BuyerCanFileReport() public {
+        // Spec §12.2: buyers have legitimate plaintext access via purchase records.
+        vm.prank(alice); purchaseState.setListing(TIER_ID, PRICE, address(0));
+        vm.prank(alice); contentRegistry.registerContent(FP2, TIER_ID);
+
+        address dave = makeAddr("dave");
+        vm.prank(dave); registry.register();
+        vm.deal(dave, PRICE);
+        vm.prank(dave); purchaseState.purchase{value: PRICE}(aliceProxy, TIER_ID);
+
+        vm.prank(dave);
+        uint256 id = reportRegistry.fileReport(FP2, block.timestamp, IDENReportRegistry.ViolationCategory.NON_CONSENT, EVIDENCE);
+        assertEq(uint256(reportRegistry.getReport(id).status), uint256(IDENReportRegistry.ReportStatus.Active));
+    }
+
+    function test_BuyerCannotClaimAccessBeforePurchase() public {
+        // Buyer's access starts at purchasedAt; claiming an earlier timestamp is not valid.
+        vm.warp(100);
+        vm.prank(alice); purchaseState.setListing(TIER_ID, PRICE, address(0));
+        vm.prank(alice); contentRegistry.registerContent(FP2, TIER_ID);
+
+        address dave = makeAddr("dave");
+        vm.prank(dave); registry.register();
+        vm.deal(dave, PRICE);
+        vm.prank(dave); purchaseState.purchase{value: PRICE}(aliceProxy, TIER_ID); // purchasedAt = 100
+
+        // Dave claims access at t=50 — before his purchase at t=100.
+        vm.prank(dave);
+        vm.expectRevert("No verified access at claimed access time");
+        reportRegistry.fileReport(FP2, 50, IDENReportRegistry.ViolationCategory.NON_CONSENT, EVIDENCE);
     }
 
     function test_CsamReinstatementAfterExpiry() public {
