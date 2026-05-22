@@ -21,6 +21,7 @@ import {
   purchaseStateAbi,
   reportRegistryAbi,
   subscriptionAbi,
+  trustTierAbi,
 } from './abis.ts';
 
 function requireAddress(envVar: string): `0x${string}` {
@@ -73,6 +74,12 @@ export const compensation = getContract({
 export const reportRegistry = getContract({
   address: requireAddress('REPORT_REGISTRY_ADDRESS'),
   abi: reportRegistryAbi,
+  client: chainClient,
+});
+
+export const trustTier = getContract({
+  address: requireAddress('TRUST_TIER_ADDRESS'),
+  abi: trustTierAbi,
   client: chainClient,
 });
 

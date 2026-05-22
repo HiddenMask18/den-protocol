@@ -33,7 +33,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { requireAuth } from '../auth/middleware.ts';
 import { getDb } from '../db/index.ts';
 import { decryptBlob, deriveCreatorBlobKey } from '../crypto/blob.ts';
-import { getPrimaryWallet, getIsEmergencyWallet } from '../chain/contracts.ts';
+import { getPrimaryWallet, getIsEmergencyWallet, trustTier } from '../chain/contracts.ts';
 import { getGrant, upsertGrant, verifyGrantSignature, type StoredGrant } from '../grants/store.ts';
 
 type SessionEnv = {
@@ -246,6 +246,19 @@ creatorRoutes.delete('/content/:fingerprint', requireAuth, (c) => {
   return new Response(null, { status: 204 });
 });
 
+// Trust tier limits enforced on content upload (spec §9.1).
+// Governance parameters for V1 — hardcoded. Adjust through governance process (spec §10, §13.4).
+const TIER_LIMITS = [
+  // Tier 0: new-creator baseline — sufficient for normal creative output (spec §9.4).
+  { maxFileSizeBytes: 500 * 1024 * 1024, maxPostsPerDay: 10 },
+  // Tier 1: 10+ distinct qualified participants.
+  { maxFileSizeBytes: 1024 * 1024 * 1024, maxPostsPerDay: 30 },
+  // Tier 2: 50+ distinct qualified participants.
+  { maxFileSizeBytes: 5 * 1024 * 1024 * 1024, maxPostsPerDay: 100 },
+  // Tier 3: 200+ distinct qualified participants — no daily post limit.
+  { maxFileSizeBytes: 20 * 1024 * 1024 * 1024, maxPostsPerDay: Infinity },
+] as const;
+
 creatorRoutes.post('/content', requireAuth, async (c) => {
   const tierIdHeader = c.req.header('X-Tier-Id');
   if (!tierIdHeader) {
@@ -280,12 +293,54 @@ creatorRoutes.post('/content', requireAuth, async (c) => {
     return c.json({ error: 'request body must contain ciphertext bytes' }, 400);
   }
 
+  const proxy = c.get('proxy');
+
+  // Enforce trust tier limits (spec §9.1): file size and daily post rate.
+  let creatorTier: number;
+  try {
+    creatorTier = await trustTier.read.getTier([proxy as `0x${string}`]);
+  } catch {
+    return c.json({ error: 'failed to read trust tier from chain — check chain connectivity' }, 500);
+  }
+  const limits = TIER_LIMITS[creatorTier as 0 | 1 | 2 | 3];
+
+  if (ciphertext.length > limits.maxFileSizeBytes) {
+    return c.json(
+      {
+        error: `file exceeds tier ${creatorTier} maximum size of ${limits.maxFileSizeBytes} bytes`,
+        tier: creatorTier,
+        maxFileSizeBytes: limits.maxFileSizeBytes,
+        receivedBytes: ciphertext.length,
+      },
+      413,
+    );
+  }
+
+  if (limits.maxPostsPerDay !== Infinity) {
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const { count } = getDb()
+      .query<{ count: number }, [string, number]>(
+        'SELECT COUNT(*) as count FROM content WHERE creator_proxy = ? AND timestamp >= ?',
+      )
+      .get(proxy, oneDayAgo)!;
+
+    if (count >= limits.maxPostsPerDay) {
+      return c.json(
+        {
+          error: `post rate limit reached for tier ${creatorTier}: ${limits.maxPostsPerDay} posts per day`,
+          tier: creatorTier,
+          maxPostsPerDay: limits.maxPostsPerDay,
+          postsToday: count,
+        },
+        429,
+      );
+    }
+  }
+
   // Fingerprint is SHA-256 of the ciphertext bytes — matches what is registered on-chain
   // in DENContentRegistry via registerContent(fingerprint, tierId).
   const fingerprintBytes = sha256(ciphertext);
   const fingerprint = toHex(fingerprintBytes); // 0x-prefixed 66-char hex
-
-  const proxy = c.get('proxy');
 
   // Reject duplicate uploads — same ciphertext = same fingerprint.
   const existing = getDb()

@@ -6,6 +6,7 @@ import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENPurchaseState.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENHostCompensation.sol";
+import "../interfaces/IDENTrustTier.sol";
 import "../interfaces/IERC20.sol";
 
 contract DENPurchaseState is IDENPurchaseState {
@@ -17,6 +18,7 @@ contract DENPurchaseState is IDENPurchaseState {
     IDENIdentity private _identity;
     address private _contentRegistry;
     address private _compensation;
+    address private _trustTier;
 
     struct Listing {
         uint256 price;
@@ -53,6 +55,14 @@ contract DENPurchaseState is IDENPurchaseState {
         require(_compensation == address(0), "Already set");
         require(compensation != address(0), "Zero address");
         _compensation = compensation;
+    }
+
+    // Wire up the trust tier contract after deployment. Callable once.
+    // If not set, purchases do not update tier graduation state (spec §9.2).
+    function setTrustTier(address trustTier) external {
+        require(_trustTier == address(0), "Already set");
+        require(trustTier != address(0), "Zero address");
+        _trustTier = trustTier;
     }
 
     // token = address(0) for native ETH; any ERC-20 contract address otherwise.
@@ -102,6 +112,12 @@ contract DENPurchaseState is IDENPurchaseState {
         }
 
         _purchases[buyerProxy][creatorProxy][listingId] = block.timestamp;
+
+        // Record qualifying transaction for creator trust tier graduation (spec §9.2).
+        // Self-exclusion is applied inside the tier contract.
+        if (_trustTier != address(0)) {
+            IDENTrustTier(_trustTier).recordTransaction(creatorProxy, buyerProxy);
+        }
 
         emit Purchased(buyerProxy, creatorProxy, listingId, block.timestamp);
     }

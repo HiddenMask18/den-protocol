@@ -10,6 +10,7 @@ import "../src/content/DENAccessGrant.sol";
 import "../src/purchase/DENPurchaseState.sol";
 import "../src/compensation/DENHostCompensation.sol";
 import "../src/reporting/DENReportRegistry.sol";
+import "../src/trust/DENTrustTier.sol";
 import "../src/interfaces/IDENHostCompensation.sol";
 
 // Deploys all DEN protocol contracts and wires them together.
@@ -58,6 +59,7 @@ contract DeployDEN is Script {
         address purchaseState;
         address compensation;
         address reportRegistry;
+        address trustTier;
     }
 
     function run() external returns (DeployedAddresses memory deployed) {
@@ -108,6 +110,10 @@ contract DeployDEN is Script {
             address(contentRegistry)
         );
 
+        // 9. Trust tier — tracks distinct qualified participant counts for creator tier graduation.
+        //    No constructor dependencies; wired to subscription, purchase, and content registry below.
+        DENTrustTier trustTier = new DENTrustTier();
+
         // Post-deployment wiring.
 
         // Sunset gate: subscription and purchase contracts check active sunset before accepting payment.
@@ -121,6 +127,14 @@ contract DeployDEN is Script {
         // Authorize depositors: only these two contracts may call depositFee.
         compensation.setSubscriptionContract(address(subscription));
         compensation.setPurchaseContract(address(purchaseState));
+
+        // Trust tier wiring: subscription and purchase contracts call recordTransaction on each payment.
+        // Content registry wiring enables operator self-exclusion check (spec §9.3).
+        subscription.setTrustTier(address(trustTier));
+        purchaseState.setTrustTier(address(trustTier));
+        trustTier.setSubscriptionContract(address(subscription));
+        trustTier.setPurchaseContract(address(purchaseState));
+        trustTier.setContentRegistry(address(contentRegistry));
 
         // Initial progressive rate table for ETH (address(0)), spec §13.4.
         // Rates in wei per declared GB, calibrated at approximately $2000/ETH.
@@ -146,7 +160,8 @@ contract DeployDEN is Script {
             accessGrant: address(accessGrant),
             purchaseState: address(purchaseState),
             compensation: address(compensation),
-            reportRegistry: address(reportRegistry)
+            reportRegistry: address(reportRegistry),
+            trustTier: address(trustTier)
         });
 
         console.log("\n=== DEN Protocol Deployment ===");
@@ -158,6 +173,7 @@ contract DeployDEN is Script {
         console.log("PURCHASE_STATE_ADDRESS    =", deployed.purchaseState);
         console.log("COMPENSATION_ADDRESS      =", deployed.compensation);
         console.log("REPORT_REGISTRY_ADDRESS   =", deployed.reportRegistry);
+        console.log("TRUST_TIER_ADDRESS        =", deployed.trustTier);
         console.log("\nPaste these into instance/.env to connect the off-chain layer.");
         console.log("Note: call reportRegistry.setGovernance(addr) once the governance contract is deployed.");
     }

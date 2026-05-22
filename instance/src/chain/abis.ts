@@ -278,6 +278,26 @@ export const reportRegistryAbi = [
   },
 ] as const;
 
+// DENTrustTier: tracks verified distinct participant counts for creator tier graduation (spec §9).
+// getTier returns the creator's current tier (0–3); the instance enforces storage and rate limits
+// based on this value. Tier 0 is the new-creator baseline — sufficient for normal creative output.
+export const trustTierAbi = [
+  {
+    name: 'getTier',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'creatorProxy', type: 'address' }],
+    outputs: [{ name: '', type: 'uint8' }],
+  },
+  {
+    name: 'getQualifiedCount',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'creatorProxy', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const;
+
 // DENContentRegistry: tracks content fingerprints and their lifecycle states.
 // hasActiveSunset is used by the access gate — when a creator has an active sunset notice,
 // the instance should not accept new subscriptions (the contracts already enforce this, but

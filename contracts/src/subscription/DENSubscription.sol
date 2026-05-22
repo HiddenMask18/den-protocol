@@ -6,6 +6,7 @@ import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENSubscription.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENHostCompensation.sol";
+import "../interfaces/IDENTrustTier.sol";
 import "../interfaces/IERC20.sol";
 
 contract DENSubscription is IDENSubscription {
@@ -17,6 +18,7 @@ contract DENSubscription is IDENSubscription {
     IDENIdentity private _identity;
     address private _contentRegistry;
     address private _compensation;
+    address private _trustTier;
 
     struct Tier {
         uint256 price;      // token units (wei for ETH, smallest denomination for ERC-20)
@@ -65,6 +67,14 @@ contract DENSubscription is IDENSubscription {
         require(_compensation == address(0), "Already set");
         require(compensation != address(0), "Zero address");
         _compensation = compensation;
+    }
+
+    // Wire up the trust tier contract after deployment. Callable once.
+    // If not set, subscription payments do not update tier graduation state (spec §9.2).
+    function setTrustTier(address trustTier) external {
+        require(_trustTier == address(0), "Already set");
+        require(trustTier != address(0), "Zero address");
+        _trustTier = trustTier;
     }
 
     // Creator calls from their wallet; proxy is resolved internally and used as the stable key.
@@ -138,6 +148,13 @@ contract DENSubscription is IDENSubscription {
 
         if (expiry > _maxSubscriptionExpiry[creatorProxy][tierId]) {
             _maxSubscriptionExpiry[creatorProxy][tierId] = expiry;
+        }
+
+        // Record qualifying transaction for creator trust tier graduation (spec §9.2).
+        // DENTrustTier de-duplicates by participant — renewals from the same subscriber
+        // are a no-op after the first payment. Self-exclusion is applied inside the tier contract.
+        if (_trustTier != address(0)) {
+            IDENTrustTier(_trustTier).recordTransaction(creatorProxy, subscriberProxy);
         }
 
         emit Subscribed(subscriberProxy, creatorProxy, tierId, expiry);
