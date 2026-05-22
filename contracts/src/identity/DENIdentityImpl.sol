@@ -24,10 +24,13 @@ contract DENIdentityImpl is IDENParticipantIdentity {
     address private _pendingRevokedWallet;   // slot 8
     uint256 private _revocationExecuteAfter; // slot 9
     uint256 private _urlUpdateNonce;         // slot 10
+    uint256 private _lastAnnouncementAt;     // slot 11: last rotation/revocation announcement timestamp
 
-    // Governance parameter: delay before compromise rotation or revocation executes (3 days for V1).
-    // Must become a governance parameter in a future upgrade.
-    uint256 public constant WALLET_ROTATION_DELAY = 3 days;
+    // Governance parameters (hardcoded V1; must become on-chain governed in §10).
+    uint256 public constant WALLET_ROTATION_DELAY          = 3 days;
+    // Minimum period between rotation or revocation announcements (spec §2.5.6).
+    // Shared across both announcement types — rotating and revoking count against the same cooldown.
+    uint256 public constant ROTATION_ANNOUNCEMENT_COOLDOWN = 1 hours;
 
     // Prevent direct initialization of the impl contract itself.
     constructor() {
@@ -86,6 +89,10 @@ contract DENIdentityImpl is IDENParticipantIdentity {
         return _urlUpdateNonce;
     }
 
+    function lastAnnouncementAt() external view returns (uint256) {
+        return _lastAnnouncementAt;
+    }
+
     // --- Emergency wallet management ---
 
     function registerEmergencyWallet(address wallet) external onlyPrimary {
@@ -99,11 +106,19 @@ contract DENIdentityImpl is IDENParticipantIdentity {
 
     // Announces a time-delayed revocation. Any registered wallet can cancel during the delay window.
     // Revocation follows the same time-delay mechanism as unilateral rotation (spec §2.5.5).
+    // Cooldown shared with initiateCompromiseRotation — rotation and revocation announcements
+    // draw from the same cooldown window (spec §2.5.6).
     function announceEmergencyWalletRevocation(address wallet) external onlyAuthorized {
         require(_emergencyWallets[wallet], "Not emergency wallet");
         require(_revocationExecuteAfter == 0, "Revocation already pending");
+        require(
+            _lastAnnouncementAt == 0 ||
+            block.timestamp >= _lastAnnouncementAt + ROTATION_ANNOUNCEMENT_COOLDOWN,
+            "Announcement cooldown active"
+        );
         _pendingRevokedWallet = wallet;
         _revocationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY;
+        _lastAnnouncementAt = block.timestamp;
         emit EmergencyWalletRevocationAnnounced(msg.sender, wallet, _revocationExecuteAfter);
     }
 
@@ -173,11 +188,18 @@ contract DENIdentityImpl is IDENParticipantIdentity {
 
     // Compromise rotation step 1: initiate time-locked rotation.
     // Any registered wallet (primary or emergency) may announce a unilateral rotation (spec §2.5.4).
+    // Cooldown shared with announceEmergencyWalletRevocation (spec §2.5.6).
     function initiateCompromiseRotation(address newWallet) external onlyAuthorized {
         require(newWallet != address(0), "Zero address");
         require(_rotationExecuteAfter == 0, "Rotation already pending");
+        require(
+            _lastAnnouncementAt == 0 ||
+            block.timestamp >= _lastAnnouncementAt + ROTATION_ANNOUNCEMENT_COOLDOWN,
+            "Announcement cooldown active"
+        );
         _pendingNewWallet = newWallet;
         _rotationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY;
+        _lastAnnouncementAt = block.timestamp;
         emit CompromiseRotationAnnounced(msg.sender, newWallet, _rotationExecuteAfter);
     }
 

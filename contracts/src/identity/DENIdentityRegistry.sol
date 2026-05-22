@@ -13,14 +13,21 @@ contract DENIdentityRegistry is IDENIdentity {
 
     address public immutable implementation;
 
-    // Governance parameter: alias duration after handle change (180 days for V1).
-    uint256 public constant HANDLE_ALIAS_RETENTION = 180 days;
+    // Governance parameters (hardcoded V1; must become on-chain governed in §10).
+    uint256 public constant HANDLE_ALIAS_RETENTION  = 180 days;
+    // Maximum handle changes permitted within one HANDLE_CHANGE_PERIOD (spec §2.5.9, §13.4).
+    // Applies to changes only — initial registration is not counted.
+    uint256 public constant HANDLE_CHANGE_ALLOWANCE = 2;
+    uint256 public constant HANDLE_CHANGE_PERIOD    = 30 days;
 
     mapping(address => address) private _proxyByWallet;
     mapping(address => address) private _walletByProxy;
     mapping(bytes32 => address) private _proxyByHandle;
     mapping(address => string) private _currentHandleOf;
     mapping(bytes32 => AliasRecord) private _handleAliases;
+    // Per-proxy change tracking. Period resets lazily on the next change attempt.
+    mapping(address => uint256) private _handleChangeCount;
+    mapping(address => uint256) private _handleChangePeriodStart;
 
     struct AliasRecord {
         address proxy;
@@ -76,6 +83,19 @@ contract DENIdentityRegistry is IDENIdentity {
 
         string memory currentHandle = _currentHandleOf[proxy];
         if (bytes(currentHandle).length > 0) {
+            // Rate limit handle changes (spec §2.5.9, §13.4).
+            // Period resets lazily: if HANDLE_CHANGE_PERIOD has elapsed since period start, restart.
+            // _handleChangePeriodStart == 0 for new proxies; the condition evaluates true only once
+            // block.timestamp exceeds HANDLE_CHANGE_PERIOD from epoch, which is always the case on
+            // mainnet (and in Foundry tests, block.timestamp = 1 so the condition is false — the
+            // allowance is consumed directly without a period reset on the very first change).
+            if (block.timestamp >= _handleChangePeriodStart[proxy] + HANDLE_CHANGE_PERIOD) {
+                _handleChangePeriodStart[proxy] = block.timestamp;
+                _handleChangeCount[proxy] = 0;
+            }
+            require(_handleChangeCount[proxy] < HANDLE_CHANGE_ALLOWANCE, "Handle change allowance exceeded");
+            _handleChangeCount[proxy]++;
+
             bytes32 oldHash = keccak256(bytes(currentHandle));
             delete _proxyByHandle[oldHash];
             _handleAliases[oldHash] = AliasRecord({
@@ -89,6 +109,13 @@ contract DENIdentityRegistry is IDENIdentity {
 
         _proxyByHandle[newHash] = proxy;
         _currentHandleOf[proxy] = newHandle;
+    }
+
+    // Returns the stored change count and period start for a proxy (spec §2.5.9).
+    // Note: period reset is lazy — these values may reflect an expired period until the
+    // next change attempt triggers the reset. Callers should check against HANDLE_CHANGE_PERIOD.
+    function handleChangeInfo(address proxy) external view returns (uint256 changeCount, uint256 periodStart) {
+        return (_handleChangeCount[proxy], _handleChangePeriodStart[proxy]);
     }
 
     // --- Wallet sync after rotation ---

@@ -346,6 +346,126 @@ contract DENIdentityRegistryTest is Test {
         assertEq(registry.resolve("vixenart"), proxy); // old handle still aliases
     }
 
+    // --- Handle change rate limiting (spec §2.5.9, §13.4) ---
+
+    // Initial handle set is not a "change" and is never rate-limited.
+    function test_InitialHandleSetNotRateLimited() public {
+        vm.prank(alice);
+        registry.register();
+
+        vm.prank(alice);
+        registry.setHandle("vixenart"); // must succeed — not a change
+        assertEq(registry.handleOf(registry.getProxy(alice)), "vixenart");
+    }
+
+    // Up to HANDLE_CHANGE_ALLOWANCE changes per period are permitted.
+    function test_HandleChangesWithinAllowanceSucceed() public {
+        vm.prank(alice);
+        registry.register();
+        vm.startPrank(alice);
+        registry.setHandle("handle_v1");
+        registry.setHandle("handle_v2"); // change 1
+        registry.setHandle("handle_v3"); // change 2 — at allowance limit
+        vm.stopPrank();
+        assertEq(registry.handleOf(registry.getProxy(alice)), "handle_v3");
+    }
+
+    // A change beyond the allowance reverts.
+    function test_HandleChangeExceedingAllowanceReverts() public {
+        vm.prank(alice);
+        registry.register();
+        vm.startPrank(alice);
+        registry.setHandle("handle_v1");
+        registry.setHandle("handle_v2"); // change 1
+        registry.setHandle("handle_v3"); // change 2 — at limit
+        vm.expectRevert("Handle change allowance exceeded");
+        registry.setHandle("handle_v4"); // change 3 — over limit
+        vm.stopPrank();
+    }
+
+    // After HANDLE_CHANGE_PERIOD elapses the allowance resets for the next period.
+    function test_HandleChangeAllowanceResetsAfterPeriod() public {
+        vm.prank(alice);
+        registry.register();
+        vm.startPrank(alice);
+        registry.setHandle("handle_v1");
+        registry.setHandle("handle_v2"); // change 1
+        registry.setHandle("handle_v3"); // change 2 — at limit
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + registry.HANDLE_CHANGE_PERIOD());
+
+        vm.prank(alice);
+        registry.setHandle("handle_v4"); // new period — must succeed
+        assertEq(registry.handleOf(registry.getProxy(alice)), "handle_v4");
+    }
+
+    // handleChangeInfo returns stored count and period start.
+    // Period start is set lazily when a change triggers a period reset (block.timestamp >= periodStart + period).
+    // In the default Foundry environment (block.timestamp=1) the reset branch never fires on first change,
+    // so periodStart stays 0. In production it is set to block.timestamp on the first period-reset change.
+    function test_HandleChangeInfoUpdates() public {
+        vm.prank(alice);
+        registry.register();
+        address proxy = registry.getProxy(alice);
+
+        (uint256 count0, uint256 start0) = registry.handleChangeInfo(proxy);
+        assertEq(count0, 0);
+        assertEq(start0, 0);
+
+        vm.prank(alice);
+        registry.setHandle("handle_v1"); // initial set — not a change, not tracked
+        (uint256 count1, uint256 start1) = registry.handleChangeInfo(proxy);
+        assertEq(count1, 0);
+        assertEq(start1, 0);
+
+        vm.prank(alice);
+        registry.setHandle("handle_v2"); // change 1
+        (uint256 count2,) = registry.handleChangeInfo(proxy);
+        assertEq(count2, 1);
+
+        vm.prank(alice);
+        registry.setHandle("handle_v3"); // change 2
+        (uint256 count3,) = registry.handleChangeInfo(proxy);
+        assertEq(count3, 2);
+
+        // After period expires, a new change triggers reset: count returns to 1, periodStart is set.
+        vm.warp(block.timestamp + registry.HANDLE_CHANGE_PERIOD());
+        vm.prank(alice);
+        registry.setHandle("handle_v4"); // first change of the new period
+        (uint256 count4, uint256 start4) = registry.handleChangeInfo(proxy);
+        assertEq(count4, 1);
+        assertGt(start4, 0); // period start was recorded at the reset timestamp
+    }
+
+    // Rate limit is keyed on proxy, not wallet — a wallet rotation does not reset the count.
+    function test_HandleChangeRateLimitKeyedOnProxy() public {
+        vm.prank(alice);
+        registry.register();
+        address proxy = registry.getProxy(alice);
+
+        vm.startPrank(alice);
+        registry.setHandle("handle_v1");
+        registry.setHandle("handle_v2"); // change 1
+        registry.setHandle("handle_v3"); // change 2 — at limit
+        vm.stopPrank();
+
+        // Rotate to bob
+        uint256 nonce = IDENParticipantIdentity(proxy).rotationNonce();
+        bytes32 structHash = keccak256(abi.encode("DEN-clean-rotation", proxy, nonce));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(bobKey, ethHash);
+        vm.prank(alice);
+        IDENParticipantIdentity(proxy).initiateCleanRotation(bob, abi.encodePacked(r, s, v));
+        vm.prank(bob);
+        registry.syncWallet(proxy);
+
+        // Bob is now primary — but the rate limit count is on the proxy, not the wallet
+        vm.prank(bob);
+        vm.expectRevert("Handle change allowance exceeded");
+        registry.setHandle("handle_v4");
+    }
+
     // --- IDENIdentity compatibility (used by DENSubscription) ---
 
     function test_IsRegisteredCompatWithSubscription() public {

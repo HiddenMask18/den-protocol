@@ -27,6 +27,9 @@ interface IDENParticipantIdentity {
     function pendingRotation() external view returns (address newWallet, uint256 executeAfter);
     function pendingRevocation() external view returns (address wallet, uint256 executeAfter);
     function urlUpdateNonce() external view returns (uint256);
+    // Unix timestamp of the last rotation or revocation announcement; 0 if none yet.
+    // Clients use this to compute when the next announcement is permitted (spec §2.5.6).
+    function lastAnnouncementAt() external view returns (uint256);
 
     function registerEmergencyWallet(address wallet) external;
 

@@ -559,6 +559,156 @@ contract DENIdentityImplTest is Test {
         proxy.initiateCleanRotation(carol, _sig(v, r, s));
     }
 
+    // --- Announcement cooldown (spec §2.5.6) ---
+
+    // Cooldown is enforced between successive compromise rotation announcements.
+    // Test: announce → cancel (clears pending) → immediately re-announce → reverts.
+    function test_CompromiseRotationCooldownEnforced() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+
+        vm.prank(alice);
+        proxy.initiateCompromiseRotation(bob);
+        assertEq(proxy.lastAnnouncementAt(), block.timestamp);
+
+        // Cancel to clear the pending flag, then try again immediately
+        vm.prank(alice);
+        proxy.cancelCompromiseRotation();
+
+        vm.prank(alice);
+        vm.expectRevert("Announcement cooldown active");
+        proxy.initiateCompromiseRotation(bob);
+    }
+
+    // After the cooldown elapses, a new announcement is permitted.
+    function test_CompromiseRotationAllowedAfterCooldown() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+
+        vm.prank(alice);
+        proxy.initiateCompromiseRotation(bob);
+
+        vm.prank(alice);
+        proxy.cancelCompromiseRotation();
+
+        vm.warp(block.timestamp + proxy.ROTATION_ANNOUNCEMENT_COOLDOWN());
+
+        vm.prank(alice);
+        proxy.initiateCompromiseRotation(bob); // must succeed
+        (address pending,) = proxy.pendingRotation();
+        assertEq(pending, bob);
+    }
+
+    // Cooldown is enforced between successive revocation announcements.
+    // Test: announce revocation of bob → cancel → immediately try to revoke carol → reverts.
+    function test_RevocationCooldownEnforced() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        vm.startPrank(alice);
+        proxy.registerEmergencyWallet(bob);
+        proxy.registerEmergencyWallet(carol);
+
+        proxy.announceEmergencyWalletRevocation(bob);
+        assertEq(proxy.lastAnnouncementAt(), block.timestamp);
+
+        proxy.cancelEmergencyWalletRevocation();
+
+        vm.expectRevert("Announcement cooldown active");
+        proxy.announceEmergencyWalletRevocation(carol);
+        vm.stopPrank();
+    }
+
+    // After cooldown elapses, revocation announcement is permitted.
+    function test_RevocationAllowedAfterCooldown() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        vm.startPrank(alice);
+        proxy.registerEmergencyWallet(bob);
+        proxy.registerEmergencyWallet(carol);
+
+        proxy.announceEmergencyWalletRevocation(bob);
+        proxy.cancelEmergencyWalletRevocation();
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + proxy.ROTATION_ANNOUNCEMENT_COOLDOWN());
+
+        vm.prank(alice);
+        proxy.announceEmergencyWalletRevocation(carol); // must succeed
+        (address pending,) = proxy.pendingRevocation();
+        assertEq(pending, carol);
+    }
+
+    // Cooldown is shared: a rotation announcement blocks a revocation announcement and vice versa.
+    function test_RotationAnnouncementBlocksRevocationWithinCooldown() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        vm.prank(alice);
+        proxy.registerEmergencyWallet(bob);
+
+        vm.prank(alice);
+        proxy.initiateCompromiseRotation(carol);
+        vm.prank(alice);
+        proxy.cancelCompromiseRotation();
+
+        // Revocation attempt immediately after the rotation announcement → blocked by shared cooldown
+        vm.prank(alice);
+        vm.expectRevert("Announcement cooldown active");
+        proxy.announceEmergencyWalletRevocation(bob);
+    }
+
+    function test_RevocationAnnouncementBlocksRotationWithinCooldown() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        vm.prank(alice);
+        proxy.registerEmergencyWallet(bob);
+
+        vm.prank(alice);
+        proxy.announceEmergencyWalletRevocation(bob);
+        vm.prank(alice);
+        proxy.cancelEmergencyWalletRevocation();
+
+        // Rotation attempt immediately after the revocation announcement → blocked by shared cooldown
+        vm.prank(alice);
+        vm.expectRevert("Announcement cooldown active");
+        proxy.initiateCompromiseRotation(carol);
+    }
+
+    function test_LastAnnouncementAtUpdatedOnRotation() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        assertEq(proxy.lastAnnouncementAt(), 0);
+
+        uint256 before = block.timestamp;
+        vm.prank(alice);
+        proxy.initiateCompromiseRotation(bob);
+        assertEq(proxy.lastAnnouncementAt(), before);
+    }
+
+    function test_LastAnnouncementAtUpdatedOnRevocation() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        vm.prank(alice);
+        proxy.registerEmergencyWallet(bob);
+
+        uint256 before = block.timestamp;
+        vm.prank(alice);
+        proxy.announceEmergencyWalletRevocation(bob);
+        assertEq(proxy.lastAnnouncementAt(), before);
+    }
+
+    // Clean rotation is NOT subject to the announcement cooldown (it is not an announcement —
+    // it executes immediately with dual-signature and has no griefing vector).
+    function test_CleanRotationNotSubjectToCooldown() public {
+        DENIdentityImpl proxy = _deployProxy(alice);
+        vm.prank(alice);
+        proxy.registerEmergencyWallet(bob);
+
+        // Trigger the cooldown via a revocation announcement
+        vm.prank(alice);
+        proxy.announceEmergencyWalletRevocation(bob);
+        vm.prank(alice);
+        proxy.cancelEmergencyWalletRevocation();
+
+        // Clean rotation must still succeed immediately (different wallet, countersig)
+        bytes32 h = _cleanRotationHash(address(proxy), proxy.rotationNonce());
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(carolKey, h);
+        vm.prank(alice);
+        proxy.initiateCleanRotation(carol, _sig(v, r, s)); // must not revert
+        assertEq(proxy.primaryWallet(), carol);
+    }
+
     // --- Upgrade ---
 
     function test_UpgradeByPrimary() public {
