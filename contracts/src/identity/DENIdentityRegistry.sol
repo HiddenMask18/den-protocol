@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 import "./DENIdentityProxy.sol";
 
 // Authoritative registry for DEN participant identity.
@@ -13,12 +14,14 @@ contract DENIdentityRegistry is IDENIdentity {
 
     address public immutable implementation;
 
-    // Governance parameters (hardcoded V1; must become on-chain governed in §10).
-    uint256 public constant HANDLE_ALIAS_RETENTION  = 180 days;
-    // Maximum handle changes permitted within one HANDLE_CHANGE_PERIOD (spec §2.5.9, §13.4).
-    // Applies to changes only — initial registration is not counted.
-    uint256 public constant HANDLE_CHANGE_ALLOWANCE = 2;
-    uint256 public constant HANDLE_CHANGE_PERIOD    = 30 days;
+    // Governance parameter store (spec §10). Set once after deploy.
+    // Falls back to V1 defaults when not set.
+    address private _govParams;
+
+    // V1 defaults — used when governance params not yet wired.
+    uint256 private constant _DEFAULT_HANDLE_ALIAS_RETENTION  = 180 days;
+    uint256 private constant _DEFAULT_HANDLE_CHANGE_ALLOWANCE = 2;
+    uint256 private constant _DEFAULT_HANDLE_CHANGE_PERIOD    = 30 days;
 
     mapping(address => address) private _proxyByWallet;
     mapping(address => address) private _walletByProxy;
@@ -42,6 +45,30 @@ contract DENIdentityRegistry is IDENIdentity {
     constructor(address _implementation) {
         require(_implementation != address(0), "Zero implementation");
         implementation = _implementation;
+    }
+
+    // Wire the governance parameter store. Callable once; falls back to V1 defaults until set.
+    function setGovernanceParams(address govParams_) external {
+        require(_govParams == address(0), "Already set");
+        require(govParams_ != address(0), "Zero address");
+        _govParams = govParams_;
+    }
+
+    // Governance parameter views — exposed with original constant names for compatibility.
+    function HANDLE_ALIAS_RETENTION() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getHandleAliasRetentionWindow()
+            : _DEFAULT_HANDLE_ALIAS_RETENTION;
+    }
+    function HANDLE_CHANGE_ALLOWANCE() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getHandleChangeAllowance()
+            : _DEFAULT_HANDLE_CHANGE_ALLOWANCE;
+    }
+    function HANDLE_CHANGE_PERIOD() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getHandleChangePeriod()
+            : _DEFAULT_HANDLE_CHANGE_PERIOD;
     }
 
     // --- Registration ---
@@ -92,18 +119,18 @@ contract DENIdentityRegistry is IDENIdentity {
             // block.timestamp exceeds HANDLE_CHANGE_PERIOD from epoch, which is always the case on
             // mainnet (and in Foundry tests, block.timestamp = 1 so the condition is false — the
             // allowance is consumed directly without a period reset on the very first change).
-            if (block.timestamp >= _handleChangePeriodStart[proxy] + HANDLE_CHANGE_PERIOD) {
+            if (block.timestamp >= _handleChangePeriodStart[proxy] + HANDLE_CHANGE_PERIOD()) {
                 _handleChangePeriodStart[proxy] = block.timestamp;
                 _handleChangeCount[proxy] = 0;
             }
-            require(_handleChangeCount[proxy] < HANDLE_CHANGE_ALLOWANCE, "Handle change allowance exceeded");
+            require(_handleChangeCount[proxy] < HANDLE_CHANGE_ALLOWANCE(), "Handle change allowance exceeded");
             _handleChangeCount[proxy]++;
 
             bytes32 oldHash = keccak256(bytes(currentHandle));
             delete _proxyByHandle[oldHash];
             _handleAliases[oldHash] = AliasRecord({
                 proxy: proxy,
-                expiresAt: block.timestamp + HANDLE_ALIAS_RETENTION
+                expiresAt: block.timestamp + HANDLE_ALIAS_RETENTION()
             });
             emit HandleChanged(proxy, currentHandle, newHandle);
         } else {

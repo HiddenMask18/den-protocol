@@ -7,12 +7,16 @@ import "../interfaces/IDENSubscription.sol";
 import "../interfaces/IDENPurchaseState.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENReportRegistry.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 
 contract DENReportRegistry is IDENReportRegistry {
 
-    // Governance parameters (hardcoded V1; become on-chain parameters in §10 governance contract).
-    uint256 public constant CREATOR_RESPONSE_WINDOW  = 7 days;
-    uint256 public constant CSAM_SUSPENSION_DURATION = 30 days;
+    // V1 defaults — used when governance params not yet wired.
+    uint256 private constant _DEFAULT_CREATOR_RESPONSE_WINDOW  = 7 days;
+    uint256 private constant _DEFAULT_CSAM_SUSPENSION_DURATION = 30 days;
+
+    // Governance parameter store (spec §10). Set once after deploy.
+    address private _govParams;
 
     address private _owner;
     IDENIdentity private _identity;
@@ -61,13 +65,35 @@ contract DENReportRegistry is IDENReportRegistry {
         _contentRegistry = IDENContentRegistry(contentRegistry);
     }
 
-    // --- Governance placeholder ---
+    // --- Governance wiring ---
 
+    // Wire the governance parameter store. Callable once.
+    function setGovernanceParams(address govParams_) external {
+        require(msg.sender == _owner, "Not owner");
+        require(_govParams == address(0), "Already set");
+        require(govParams_ != address(0), "Zero address");
+        _govParams = govParams_;
+    }
+
+    // Wire the governance contract for resolving operator-conflicted reports (spec §12.2, Option B).
+    // One-time setter; cannot be changed once set.
     function setGovernance(address governance) external {
         require(msg.sender == _owner, "Not owner");
         require(_governance == address(0), "Already set");
         require(governance != address(0), "Zero address");
         _governance = governance;
+    }
+
+    // Exposed with original constant names for backward compatibility.
+    function CREATOR_RESPONSE_WINDOW() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getCreatorResponseWindow()
+            : _DEFAULT_CREATOR_RESPONSE_WINDOW;
+    }
+    function CSAM_SUSPENSION_DURATION() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getCsamSuspensionDuration()
+            : _DEFAULT_CSAM_SUSPENSION_DURATION;
     }
 
     // --- Report filing ---
@@ -207,7 +233,7 @@ contract DENReportRegistry is IDENReportRegistry {
         require(report.category == ViolationCategory.CSAM, "Not a CSAM report");
         require(!_lawEnforcementHold[reportId], "Law enforcement hold active");
         require(
-            block.timestamp >= report.filedAt + CSAM_SUSPENSION_DURATION,
+            block.timestamp >= report.filedAt + CSAM_SUSPENSION_DURATION(),
             "Suspension period not elapsed"
         );
 

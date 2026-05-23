@@ -2,10 +2,16 @@
 pragma solidity ^0.8.20;
 
 import "../interfaces/IDENParticipantIdentity.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 
 // Logic contract for per-participant identity proxies.
 // All state lives in the proxy's storage via delegatecall.
 // Storage layout is append-only across upgrades.
+//
+// govParams is stored as an immutable — embedded in the impl bytecode and shared by all
+// proxies that delegate to this impl. Changing govParams requires deploying a new impl
+// and having proxies call upgradeTo(newImpl). This is the intended upgrade path for
+// wallet_rotation_delay and rotation_announcement_cooldown governance changes.
 contract DENIdentityImpl is IDENParticipantIdentity {
 
     // ERC-1967 implementation slot: keccak256("eip1967.proxy.implementation") - 1
@@ -26,15 +32,28 @@ contract DENIdentityImpl is IDENParticipantIdentity {
     uint256 private _urlUpdateNonce;         // slot 10
     uint256 private _lastAnnouncementAt;     // slot 11: last rotation/revocation announcement timestamp
 
-    // Governance parameters (hardcoded V1; must become on-chain governed in §10).
-    uint256 public constant WALLET_ROTATION_DELAY          = 3 days;
-    // Minimum period between rotation or revocation announcements (spec §2.5.6).
-    // Shared across both announcement types — rotating and revoking count against the same cooldown.
-    uint256 public constant ROTATION_ANNOUNCEMENT_COOLDOWN = 1 hours;
+    // Governance parameter store (spec §10). Immutable — embedded in impl bytecode.
+    // All proxies delegating to this impl share the same govParams address.
+    address public immutable govParams;
 
     // Prevent direct initialization of the impl contract itself.
-    constructor() {
+    constructor(address govParams_) {
+        require(govParams_ != address(0), "Zero address");
         _initialized = 1;
+        govParams = govParams_;
+    }
+
+    // --- Governance parameter views ---
+    // Exposed with the original constant names for backward compatibility with callers.
+
+    function WALLET_ROTATION_DELAY() public view returns (uint256) {
+        return IDENGovernanceParams(govParams).getWalletRotationDelay();
+    }
+
+    // Minimum period between rotation or revocation announcements (spec §2.5.6).
+    // Shared across both announcement types.
+    function ROTATION_ANNOUNCEMENT_COOLDOWN() public view returns (uint256) {
+        return IDENGovernanceParams(govParams).getRotationAnnouncementCooldown();
     }
 
     modifier onlyPrimary() {
@@ -113,11 +132,11 @@ contract DENIdentityImpl is IDENParticipantIdentity {
         require(_revocationExecuteAfter == 0, "Revocation already pending");
         require(
             _lastAnnouncementAt == 0 ||
-            block.timestamp >= _lastAnnouncementAt + ROTATION_ANNOUNCEMENT_COOLDOWN,
+            block.timestamp >= _lastAnnouncementAt + ROTATION_ANNOUNCEMENT_COOLDOWN(),
             "Announcement cooldown active"
         );
         _pendingRevokedWallet = wallet;
-        _revocationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY;
+        _revocationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY();
         _lastAnnouncementAt = block.timestamp;
         emit EmergencyWalletRevocationAnnounced(msg.sender, wallet, _revocationExecuteAfter);
     }
@@ -194,11 +213,11 @@ contract DENIdentityImpl is IDENParticipantIdentity {
         require(_rotationExecuteAfter == 0, "Rotation already pending");
         require(
             _lastAnnouncementAt == 0 ||
-            block.timestamp >= _lastAnnouncementAt + ROTATION_ANNOUNCEMENT_COOLDOWN,
+            block.timestamp >= _lastAnnouncementAt + ROTATION_ANNOUNCEMENT_COOLDOWN(),
             "Announcement cooldown active"
         );
         _pendingNewWallet = newWallet;
-        _rotationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY;
+        _rotationExecuteAfter = block.timestamp + WALLET_ROTATION_DELAY();
         _lastAnnouncementAt = block.timestamp;
         emit CompromiseRotationAnnounced(msg.sender, newWallet, _rotationExecuteAfter);
     }

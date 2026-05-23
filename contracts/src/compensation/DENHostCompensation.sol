@@ -5,23 +5,20 @@ import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENHostCompensation.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 import "../interfaces/IERC20.sol";
 
 contract DENHostCompensation is IDENHostCompensation {
 
-    // Protocol fee: 2.5% of each subscription and purchase payment (spec §13.3).
-    // Governance parameter for V1 — hardcoded. Must match FEE_BPS in DENSubscription and DENPurchaseState.
-    uint256 public constant FEE_BPS = 250;
+    // V1 defaults — used when governance params not yet wired.
+    uint256 private constant _DEFAULT_FEE_BPS                      = 250;
+    uint256 private constant _DEFAULT_STORAGE_COMPENSATION_LOOKBACK = 90 days;
+    uint256 private constant _DEFAULT_MICRO_MAX                     = 80;
+    uint256 private constant _DEFAULT_SMALL_MAX                     = 200;
+    uint256 private constant _DEFAULT_MEDIUM_MAX                    = 500;
 
-    // How far back subscriber activity is checked before denying a storage compensation claim (spec §7.2).
-    // Governance parameter for V1 — hardcoded.
-    uint256 public constant STORAGE_COMPENSATION_LOOKBACK = 90 days;
-
-    // Instance size bracket thresholds (spec §13.4 progressive_rate_parameters).
-    // Instance size = creator_count + subscription_relationship_count, same-instance excluded (spec §9.3).
-    uint256 public constant MICRO_MAX  = 80;
-    uint256 public constant SMALL_MAX  = 200;
-    uint256 public constant MEDIUM_MAX = 500;
+    // Governance parameter store (spec §10). Set once after deploy.
+    address private _govParams;
 
     address private _owner;
     IDENIdentity private _identity;
@@ -45,6 +42,43 @@ contract DENHostCompensation is IDENHostCompensation {
         _owner = msg.sender;
         _identity = IDENIdentity(identityRegistry);
         _contentRegistry = IDENContentRegistry(contentRegistry);
+    }
+
+    // --- Governance wiring ---
+
+    // Wire the governance parameter store. Callable once; owner-only.
+    function setGovernanceParams(address govParams_) external {
+        require(msg.sender == _owner, "Not owner");
+        require(_govParams == address(0), "Already set");
+        require(govParams_ != address(0), "Zero address");
+        _govParams = govParams_;
+    }
+
+    // Public views — exposed with original constant names for backward compatibility.
+    function FEE_BPS() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getFeeBps()
+            : _DEFAULT_FEE_BPS;
+    }
+    function STORAGE_COMPENSATION_LOOKBACK() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getStorageCompensationLookback()
+            : _DEFAULT_STORAGE_COMPENSATION_LOOKBACK;
+    }
+    function MICRO_MAX() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getMicroMax()
+            : _DEFAULT_MICRO_MAX;
+    }
+    function SMALL_MAX() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getSmallMax()
+            : _DEFAULT_SMALL_MAX;
+    }
+    function MEDIUM_MAX() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getMediumMax()
+            : _DEFAULT_MEDIUM_MAX;
     }
 
     // --- Owner-only configuration ---
@@ -152,9 +186,9 @@ contract DENHostCompensation is IDENHostCompensation {
     // --- Internal helpers ---
 
     function _getBracketRates(address token, uint256 instanceSize) internal view returns (BracketRates memory) {
-        if (instanceSize < MICRO_MAX)  return _rates[token][0];
-        if (instanceSize < SMALL_MAX)  return _rates[token][1];
-        if (instanceSize < MEDIUM_MAX) return _rates[token][2];
+        if (instanceSize < MICRO_MAX())  return _rates[token][0];
+        if (instanceSize < SMALL_MAX())  return _rates[token][1];
+        if (instanceSize < MEDIUM_MAX()) return _rates[token][2];
         return _rates[token][3];
     }
 

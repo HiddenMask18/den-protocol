@@ -24,6 +24,7 @@ import { contentRoutes } from './content/routes.ts';
 import { portabilityRoutes } from './portability/routes.ts';
 import { hosterRoutes } from './hoster/routes.ts';
 import { moderationRoutes } from './moderation/routes.ts';
+import { governanceRoutes } from './governance/routes.ts';
 
 initDb();
 loadInstanceMasterKey();
@@ -37,6 +38,7 @@ app.route('/creator', portabilityRoutes);
 app.route('/content', contentRoutes);
 app.route('/hoster', hosterRoutes);
 app.route('/moderation', moderationRoutes);
+app.route('/governance', governanceRoutes);
 
 app.onError((err, c) => {
   console.error('[error]', err);

@@ -298,6 +298,37 @@ export const trustTierAbi = [
   },
 ] as const;
 
+// DENGovernanceParams: on-chain governance parameter store (spec §10, §13.4).
+// All governance parameters adjustable through the community approval process are readable here.
+// The instance reads post_size_limits and post_rate_limits from this contract to enforce
+// creator upload limits dynamically rather than relying on hardcoded constants.
+export const governanceAbi = [
+  { name: 'getPostSizeLimit',                type: 'function', stateMutability: 'view', inputs: [{ name: 'tier', type: 'uint8' }], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getPostRateLimit',                type: 'function', stateMutability: 'view', inputs: [{ name: 'tier', type: 'uint8' }], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getFeeBps',                       type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getWalletRotationDelay',          type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getRotationAnnouncementCooldown', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getHandleChangeAllowance',        type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getHandleChangePeriod',           type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getHandleAliasRetentionWindow',   type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getSubscriberProtectionWindow',   type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getSunsetWindowDuration',         type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getStorageCompensationLookback',  type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getMicroMax',                     type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getSmallMax',                     type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getMediumMax',                    type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getTier1Threshold',               type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getTier2Threshold',               type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getTier3Threshold',               type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getTierLookbackWindow',           type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getCreatorResponseWindow',        type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getCsamSuspensionDuration',       type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getInactivityGracePeriod',        type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getBatchSettlementInterval',      type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getSubscriptionExpiryGracePeriod', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { name: 'getResolverCacheTtl',             type: 'function', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+] as const;
+
 // DENContentRegistry: tracks content fingerprints and their lifecycle states.
 // hasActiveSunset is used by the access gate — when a creator has an active sunset notice,
 // the instance should not accept new subscriptions (the contracts already enforce this, but

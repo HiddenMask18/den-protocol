@@ -33,7 +33,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { requireAuth } from '../auth/middleware.ts';
 import { getDb } from '../db/index.ts';
 import { decryptBlob, deriveCreatorBlobKey } from '../crypto/blob.ts';
-import { getPrimaryWallet, getIsEmergencyWallet, trustTier } from '../chain/contracts.ts';
+import { getPrimaryWallet, getIsEmergencyWallet, governance, trustTier } from '../chain/contracts.ts';
 import { getGrant, upsertGrant, verifyGrantSignature, type StoredGrant } from '../grants/store.ts';
 
 type SessionEnv = {
@@ -246,18 +246,7 @@ creatorRoutes.delete('/content/:fingerprint', requireAuth, (c) => {
   return new Response(null, { status: 204 });
 });
 
-// Trust tier limits enforced on content upload (spec §9.1).
-// Governance parameters for V1 — hardcoded. Adjust through governance process (spec §10, §13.4).
-const TIER_LIMITS = [
-  // Tier 0: new-creator baseline — sufficient for normal creative output (spec §9.4).
-  { maxFileSizeBytes: 500 * 1024 * 1024, maxPostsPerDay: 10 },
-  // Tier 1: 10+ distinct qualified participants.
-  { maxFileSizeBytes: 1024 * 1024 * 1024, maxPostsPerDay: 30 },
-  // Tier 2: 50+ distinct qualified participants.
-  { maxFileSizeBytes: 5 * 1024 * 1024 * 1024, maxPostsPerDay: 100 },
-  // Tier 3: 200+ distinct qualified participants — no daily post limit.
-  { maxFileSizeBytes: 20 * 1024 * 1024 * 1024, maxPostsPerDay: Infinity },
-] as const;
+const UINT256_MAX = (2n ** 256n) - 1n;
 
 creatorRoutes.post('/content', requireAuth, async (c) => {
   const tierIdHeader = c.req.header('X-Tier-Id');
@@ -296,27 +285,37 @@ creatorRoutes.post('/content', requireAuth, async (c) => {
   const proxy = c.get('proxy');
 
   // Enforce trust tier limits (spec §9.1): file size and daily post rate.
+  // Limits are read live from the governance contract so they respond to parameter updates
+  // without requiring an instance redeploy (spec §10).
   let creatorTier: number;
+  let maxFileSizeBytes: bigint;
+  let maxPostRateRaw: bigint;
   try {
     creatorTier = await trustTier.read.getTier([proxy as `0x${string}`]);
+    [maxFileSizeBytes, maxPostRateRaw] = await Promise.all([
+      governance.read.getPostSizeLimit([creatorTier as 0 | 1 | 2 | 3]),
+      governance.read.getPostRateLimit([creatorTier as 0 | 1 | 2 | 3]),
+    ]);
   } catch {
-    return c.json({ error: 'failed to read trust tier from chain — check chain connectivity' }, 500);
+    return c.json({ error: 'failed to read trust tier or limits from chain — check chain connectivity' }, 500);
   }
-  const limits = TIER_LIMITS[creatorTier as 0 | 1 | 2 | 3];
 
-  if (ciphertext.length > limits.maxFileSizeBytes) {
+  // type(uint256).max is the sentinel for "no daily post limit" (tier 3, spec §13.4).
+  const maxPostsPerDay = maxPostRateRaw === UINT256_MAX ? null : Number(maxPostRateRaw);
+
+  if (BigInt(ciphertext.length) > maxFileSizeBytes) {
     return c.json(
       {
-        error: `file exceeds tier ${creatorTier} maximum size of ${limits.maxFileSizeBytes} bytes`,
+        error: `file exceeds tier ${creatorTier} maximum size of ${maxFileSizeBytes} bytes`,
         tier: creatorTier,
-        maxFileSizeBytes: limits.maxFileSizeBytes,
+        maxFileSizeBytes: maxFileSizeBytes.toString(),
         receivedBytes: ciphertext.length,
       },
       413,
     );
   }
 
-  if (limits.maxPostsPerDay !== Infinity) {
+  if (maxPostsPerDay !== null) {
     const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
     const { count } = getDb()
       .query<{ count: number }, [string, number]>(
@@ -324,12 +323,12 @@ creatorRoutes.post('/content', requireAuth, async (c) => {
       )
       .get(proxy, oneDayAgo)!;
 
-    if (count >= limits.maxPostsPerDay) {
+    if (count >= maxPostsPerDay) {
       return c.json(
         {
-          error: `post rate limit reached for tier ${creatorTier}: ${limits.maxPostsPerDay} posts per day`,
+          error: `post rate limit reached for tier ${creatorTier}: ${maxPostsPerDay} posts per day`,
           tier: creatorTier,
-          maxPostsPerDay: limits.maxPostsPerDay,
+          maxPostsPerDay,
           postsToday: count,
         },
         429,

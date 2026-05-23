@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENTrustTier.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 
 // Creator trust tier graduation tracker (spec §9).
 //
@@ -24,11 +25,13 @@ import "../interfaces/IDENTrustTier.sol";
 //   exclusion is declared-plus-auditable (consistent with §7.3 bandwidth model).
 contract DENTrustTier is IDENTrustTier {
 
-    // Distinct-participant thresholds for tier graduation (spec §9.2, §13.4).
-    // Governance parameters for V1 — hardcoded. Adjust through governance process (spec §10).
-    uint256 public constant TIER_1_THRESHOLD = 10;
-    uint256 public constant TIER_2_THRESHOLD = 50;
-    uint256 public constant TIER_3_THRESHOLD = 200;
+    // V1 defaults — used when governance params not yet wired.
+    uint256 private constant _DEFAULT_TIER_1_THRESHOLD = 10;
+    uint256 private constant _DEFAULT_TIER_2_THRESHOLD = 50;
+    uint256 private constant _DEFAULT_TIER_3_THRESHOLD = 200;
+
+    // Governance parameter store (spec §10). Set once after deploy.
+    address private _govParams;
 
     address private _owner;
     IDENContentRegistry private _contentRegistry;
@@ -48,6 +51,33 @@ contract DENTrustTier is IDENTrustTier {
 
     constructor() {
         _owner = msg.sender;
+    }
+
+    // --- Governance wiring ---
+
+    // Wire the governance parameter store. Callable once; owner-only.
+    function setGovernanceParams(address govParams_) external {
+        require(msg.sender == _owner, "Not owner");
+        require(_govParams == address(0), "Already set");
+        require(govParams_ != address(0), "Zero address");
+        _govParams = govParams_;
+    }
+
+    // Exposed with original constant names for backward compatibility.
+    function TIER_1_THRESHOLD() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getTier1Threshold()
+            : _DEFAULT_TIER_1_THRESHOLD;
+    }
+    function TIER_2_THRESHOLD() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getTier2Threshold()
+            : _DEFAULT_TIER_2_THRESHOLD;
+    }
+    function TIER_3_THRESHOLD() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getTier3Threshold()
+            : _DEFAULT_TIER_3_THRESHOLD;
     }
 
     // --- One-time wiring (owner only) ---
@@ -115,9 +145,9 @@ contract DENTrustTier is IDENTrustTier {
     // Tier 0 is the new-creator baseline — sufficient for normal creative output (spec §9.4).
     function getTier(address creatorProxy) external view returns (uint8) {
         uint256 count = _qualifiedCount[creatorProxy];
-        if (count >= TIER_3_THRESHOLD) return 3;
-        if (count >= TIER_2_THRESHOLD) return 2;
-        if (count >= TIER_1_THRESHOLD) return 1;
+        if (count >= TIER_3_THRESHOLD()) return 3;
+        if (count >= TIER_2_THRESHOLD()) return 2;
+        if (count >= TIER_1_THRESHOLD()) return 1;
         return 0;
     }
 

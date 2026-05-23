@@ -7,13 +7,16 @@ import "../interfaces/IDENPurchaseState.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENHostCompensation.sol";
 import "../interfaces/IDENTrustTier.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 import "../interfaces/IERC20.sol";
 
 contract DENPurchaseState is IDENPurchaseState {
 
-    // Protocol fee basis points (2.5%). Governance parameter for V1 — hardcoded.
-    // Must match FEE_BPS in DENHostCompensation and DENSubscription.
-    uint256 public constant FEE_BPS = 250;
+    // V1 default — used when governance params not yet wired.
+    uint256 private constant _DEFAULT_FEE_BPS = 250;
+
+    // Governance parameter store (spec §10). Set once after deploy.
+    address private _govParams;
 
     IDENIdentity private _identity;
     address private _contentRegistry;
@@ -41,6 +44,20 @@ contract DENPurchaseState is IDENPurchaseState {
 
     constructor(address identityContractAddress) {
         _identity = IDENIdentity(identityContractAddress);
+    }
+
+    // Wire the governance parameter store. Callable once.
+    function setGovernanceParams(address govParams_) external {
+        require(_govParams == address(0), "Already set");
+        require(govParams_ != address(0), "Zero address");
+        _govParams = govParams_;
+    }
+
+    // Exposed with original constant name for backward compatibility.
+    function FEE_BPS() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getFeeBps()
+            : _DEFAULT_FEE_BPS;
     }
 
     function setContentRegistry(address contentRegistry) external {
@@ -87,10 +104,11 @@ contract DENPurchaseState is IDENPurchaseState {
         require(listing.exists, "Listing does not exist");
         require(_purchases[buyerProxy][creatorProxy][listingId] == 0, "Already purchased");
 
+        uint256 feeBps = FEE_BPS();
         if (listing.token == address(0)) {
             require(msg.value == listing.price, "Incorrect payment amount");
             if (_compensation != address(0)) {
-                uint256 fee = (listing.price * FEE_BPS) / 10000;
+                uint256 fee = (listing.price * feeBps) / 10000;
                 _escrow[creatorProxy][address(0)] += listing.price - fee;
                 IDENHostCompensation(_compensation).depositFee{value: fee}(creatorProxy, address(0), fee);
             } else {
@@ -101,7 +119,7 @@ contract DENPurchaseState is IDENPurchaseState {
             bool ok = IERC20(listing.token).transferFrom(msg.sender, address(this), listing.price);
             require(ok, "Token transfer failed");
             if (_compensation != address(0)) {
-                uint256 fee = (listing.price * FEE_BPS) / 10000;
+                uint256 fee = (listing.price * feeBps) / 10000;
                 _escrow[creatorProxy][listing.token] += listing.price - fee;
                 bool feeOk = IERC20(listing.token).transfer(_compensation, fee);
                 require(feeOk, "Fee transfer failed");

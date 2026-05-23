@@ -16,6 +16,7 @@ import {
   accessGrantAbi,
   compensationAbi,
   contentRegistryAbi,
+  governanceAbi,
   identityImplAbi,
   identityRegistryAbi,
   purchaseStateAbi,
@@ -80,6 +81,12 @@ export const reportRegistry = getContract({
 export const trustTier = getContract({
   address: requireAddress('TRUST_TIER_ADDRESS'),
   abi: trustTierAbi,
+  client: chainClient,
+});
+
+export const governance = getContract({
+  address: requireAddress('GOVERNANCE_ADDRESS'),
+  abi: governanceAbi,
   client: chainClient,
 });
 

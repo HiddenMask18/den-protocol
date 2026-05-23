@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
+import "./mocks/MockGovParams.sol";
 import "../src/identity/DENIdentityImpl.sol";
 import "../src/identity/DENIdentityRegistry.sol";
 import "../src/subscription/DENSubscription.sol";
@@ -42,7 +43,7 @@ contract DENReportRegistryTest is Test {
         carol      = makeAddr("carol");
         instanceOp = makeAddr("instanceOp");
 
-        impl             = new DENIdentityImpl();
+        impl             = new DENIdentityImpl(address(new MockGovParams()));
         registry         = new DENIdentityRegistry(address(impl));
         subscription     = new DENSubscription(address(registry));
         purchaseState    = new DENPurchaseState(address(registry));

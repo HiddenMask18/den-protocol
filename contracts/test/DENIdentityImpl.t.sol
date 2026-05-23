@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
+import "./mocks/MockGovParams.sol";
 import "../src/identity/DENIdentityImpl.sol";
 import "../src/identity/DENIdentityProxy.sol";
 
@@ -47,7 +48,7 @@ contract DENIdentityImplTest is Test {
     }
 
     function setUp() public {
-        impl = new DENIdentityImpl();
+        impl = new DENIdentityImpl(address(new MockGovParams()));
         (alice, aliceKey) = makeAddrAndKey("alice");
         (bob, bobKey) = makeAddrAndKey("bob");
         (carol, carolKey) = makeAddrAndKey("carol");
@@ -715,7 +716,7 @@ contract DENIdentityImplTest is Test {
         DENIdentityImpl proxy = _deployProxy(alice);
 
         // Deploy a new impl (same logic for test purposes)
-        DENIdentityImpl newImpl = new DENIdentityImpl();
+        DENIdentityImpl newImpl = new DENIdentityImpl(address(new MockGovParams()));
 
         vm.prank(alice);
         proxy.upgradeTo(address(newImpl));
@@ -726,7 +727,7 @@ contract DENIdentityImplTest is Test {
 
     function test_UpgradeByNonPrimaryReverts() public {
         DENIdentityImpl proxy = _deployProxy(alice);
-        DENIdentityImpl newImpl = new DENIdentityImpl();
+        DENIdentityImpl newImpl = new DENIdentityImpl(address(new MockGovParams()));
 
         vm.prank(bob);
         vm.expectRevert("Not primary wallet");
@@ -746,7 +747,7 @@ contract DENIdentityImplTest is Test {
         vm.prank(alice);
         aliceProxy.updateInstanceURL(url, address(instanceProxy), _sig(v, r, s));
 
-        DENIdentityImpl newImpl = new DENIdentityImpl();
+        DENIdentityImpl newImpl = new DENIdentityImpl(address(new MockGovParams()));
         vm.prank(alice);
         aliceProxy.upgradeTo(address(newImpl));
 

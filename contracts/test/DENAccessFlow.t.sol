@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
+import "./mocks/MockGovParams.sol";
 import "../src/identity/DENIdentityImpl.sol";
 import "../src/identity/DENIdentityRegistry.sol";
 import "../src/interfaces/IDENParticipantIdentity.sol";
@@ -37,7 +38,7 @@ contract DENAccessFlowTest is Test {
         (alice, aliceKey) = makeAddrAndKey("alice");
         (bob, bobKey) = makeAddrAndKey("bob");
 
-        impl = new DENIdentityImpl();
+        impl = new DENIdentityImpl(address(new MockGovParams()));
         registry = new DENIdentityRegistry(address(impl));
         subscription = new DENSubscription(address(registry));
         contentRegistry = new DENContentRegistry(address(registry), address(subscription));

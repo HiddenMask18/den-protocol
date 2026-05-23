@@ -5,12 +5,15 @@ import "../interfaces/IDENIdentity.sol";
 import "../interfaces/IDENParticipantIdentity.sol";
 import "../interfaces/IDENContentRegistry.sol";
 import "../interfaces/IDENSubscription.sol";
+import "../interfaces/IDENGovernanceParams.sol";
 
 contract DENContentRegistry is IDENContentRegistry {
 
-    // Fallback protection window when tier duration is unavailable (governance parameter for V1).
-    // Must become a governance parameter in a future upgrade.
-    uint256 public constant SUBSCRIBER_PROTECTION_WINDOW = 30 days;
+    // V1 default — used when governance params not yet wired.
+    uint256 private constant _DEFAULT_SUBSCRIBER_PROTECTION_WINDOW = 30 days;
+
+    // Governance parameter store (spec §10). Set once after deploy.
+    address private _govParams;
 
     IDENIdentity private _identity;
     IDENSubscription private _subscription;
@@ -40,6 +43,20 @@ contract DENContentRegistry is IDENContentRegistry {
     constructor(address identityContractAddress, address subscriptionContractAddress) {
         _identity = IDENIdentity(identityContractAddress);
         _subscription = IDENSubscription(subscriptionContractAddress);
+    }
+
+    // Wire the governance parameter store. Callable once.
+    function setGovernanceParams(address govParams_) external {
+        require(_govParams == address(0), "Already set");
+        require(govParams_ != address(0), "Zero address");
+        _govParams = govParams_;
+    }
+
+    // Exposed with original constant name for backward compatibility.
+    function SUBSCRIBER_PROTECTION_WINDOW() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getSubscriberProtectionWindow()
+            : _DEFAULT_SUBSCRIBER_PROTECTION_WINDOW;
     }
 
     // Register a new content fingerprint under the caller's proxy, assigned to a tier.
@@ -99,7 +116,7 @@ contract DENContentRegistry is IDENContentRegistry {
         record.sunsetNoticedAt = block.timestamp;
 
         uint256 tierDuration = _subscription.getTierDuration(record.creatorProxy, record.tierId);
-        uint256 window = tierDuration > 0 ? tierDuration : SUBSCRIBER_PROTECTION_WINDOW;
+        uint256 window = tierDuration > 0 ? tierDuration : SUBSCRIBER_PROTECTION_WINDOW();
         // Use the maximum subscription expiry ever recorded for this tier as the floor.
         // A subscriber who stacked multiple renewals before the notice may have an expiry
         // beyond block.timestamp + window. spec §7.5 Step 3: access persists until their
