@@ -13,6 +13,7 @@ import "./DENIdentityProxy.sol";
 contract DENIdentityRegistry is IDENIdentity {
 
     address public immutable implementation;
+    address private _owner;
 
     // Governance parameter store (spec §10). Set once after deploy.
     // Falls back to V1 defaults when not set.
@@ -45,10 +46,12 @@ contract DENIdentityRegistry is IDENIdentity {
     constructor(address _implementation) {
         require(_implementation != address(0), "Zero implementation");
         implementation = _implementation;
+        _owner = msg.sender;
     }
 
-    // Wire the governance parameter store. Callable once; falls back to V1 defaults until set.
+    // Wire the governance parameter store. Callable once; owner-only.
     function setGovernanceParams(address govParams_) external {
+        require(msg.sender == _owner, "Not owner");
         require(_govParams == address(0), "Already set");
         require(govParams_ != address(0), "Zero address");
         _govParams = govParams_;

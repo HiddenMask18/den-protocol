@@ -17,6 +17,7 @@ contract DENPurchaseState is IDENPurchaseState {
 
     // Governance parameter store (spec §10). Set once after deploy.
     address private _govParams;
+    address private _owner;
 
     IDENIdentity private _identity;
     address private _contentRegistry;
@@ -44,10 +45,12 @@ contract DENPurchaseState is IDENPurchaseState {
 
     constructor(address identityContractAddress) {
         _identity = IDENIdentity(identityContractAddress);
+        _owner = msg.sender;
     }
 
-    // Wire the governance parameter store. Callable once.
+    // Wire the governance parameter store. Callable once; owner-only.
     function setGovernanceParams(address govParams_) external {
+        require(msg.sender == _owner, "Not owner");
         require(_govParams == address(0), "Already set");
         require(govParams_ != address(0), "Zero address");
         _govParams = govParams_;
@@ -60,23 +63,27 @@ contract DENPurchaseState is IDENPurchaseState {
             : _DEFAULT_FEE_BPS;
     }
 
+    // Wire up the content registry after deployment. Callable once; owner-only.
     function setContentRegistry(address contentRegistry) external {
+        require(msg.sender == _owner, "Not owner");
         require(_contentRegistry == address(0), "Already set");
         require(contentRegistry != address(0), "Zero address");
         _contentRegistry = contentRegistry;
     }
 
-    // Wire up the host compensation contract after deployment. Callable once.
+    // Wire up the host compensation contract after deployment. Callable once; owner-only.
     // If not set, the full payment goes to creator escrow with no protocol fee deducted.
     function setCompensation(address compensation) external {
+        require(msg.sender == _owner, "Not owner");
         require(_compensation == address(0), "Already set");
         require(compensation != address(0), "Zero address");
         _compensation = compensation;
     }
 
-    // Wire up the trust tier contract after deployment. Callable once.
+    // Wire up the trust tier contract after deployment. Callable once; owner-only.
     // If not set, purchases do not update tier graduation state (spec §9.2).
     function setTrustTier(address trustTier) external {
+        require(msg.sender == _owner, "Not owner");
         require(_trustTier == address(0), "Already set");
         require(trustTier != address(0), "Zero address");
         _trustTier = trustTier;

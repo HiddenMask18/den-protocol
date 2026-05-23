@@ -9,11 +9,13 @@ import "../interfaces/IDENGovernanceParams.sol";
 
 contract DENContentRegistry is IDENContentRegistry {
 
-    // V1 default — used when governance params not yet wired.
+    // V1 defaults — used when governance params not yet wired.
     uint256 private constant _DEFAULT_SUBSCRIBER_PROTECTION_WINDOW = 30 days;
+    uint256 private constant _DEFAULT_SUNSET_WINDOW_DURATION       = 30 days;
 
     // Governance parameter store (spec §10). Set once after deploy.
     address private _govParams;
+    address private _owner;
 
     IDENIdentity private _identity;
     IDENSubscription private _subscription;
@@ -43,20 +45,27 @@ contract DENContentRegistry is IDENContentRegistry {
     constructor(address identityContractAddress, address subscriptionContractAddress) {
         _identity = IDENIdentity(identityContractAddress);
         _subscription = IDENSubscription(subscriptionContractAddress);
+        _owner = msg.sender;
     }
 
-    // Wire the governance parameter store. Callable once.
+    // Wire the governance parameter store. Callable once; owner-only.
     function setGovernanceParams(address govParams_) external {
+        require(msg.sender == _owner, "Not owner");
         require(_govParams == address(0), "Already set");
         require(govParams_ != address(0), "Zero address");
         _govParams = govParams_;
     }
 
-    // Exposed with original constant name for backward compatibility.
+    // Exposed with original constant names for backward compatibility.
     function SUBSCRIBER_PROTECTION_WINDOW() public view returns (uint256) {
         return _govParams != address(0)
             ? IDENGovernanceParams(_govParams).getSubscriberProtectionWindow()
             : _DEFAULT_SUBSCRIBER_PROTECTION_WINDOW;
+    }
+    function SUNSET_WINDOW_DURATION() public view returns (uint256) {
+        return _govParams != address(0)
+            ? IDENGovernanceParams(_govParams).getSunsetWindowDuration()
+            : _DEFAULT_SUNSET_WINDOW_DURATION;
     }
 
     // Register a new content fingerprint under the caller's proxy, assigned to a tier.
@@ -115,16 +124,17 @@ contract DENContentRegistry is IDENContentRegistry {
         record.lifecycle = Lifecycle.SunsetNoticed;
         record.sunsetNoticedAt = block.timestamp;
 
-        uint256 tierDuration = _subscription.getTierDuration(record.creatorProxy, record.tierId);
-        uint256 window = tierDuration > 0 ? tierDuration : SUBSCRIBER_PROTECTION_WINDOW();
-        // Use the maximum subscription expiry ever recorded for this tier as the floor.
-        // A subscriber who stacked multiple renewals before the notice may have an expiry
-        // beyond block.timestamp + window. spec §7.5 Step 3: access persists until their
-        // paid period lapses naturally — not just one tier duration from now.
+        // Spec §7.5 requires two sequential windows before deletion is permitted:
+        //   Step 2 — sunset window: creator migrates (sunsetWindowDuration).
+        //   Step 3 — subscriber protection window: existing subscribers lapse naturally.
+        // deletableAfter is the later of:
+        //   (a) block.timestamp + sunsetWindowDuration + subscriberProtectionWindow
+        //       — the spec-minimum floor regardless of subscription state.
+        //   (b) the highest subscription expiry ever recorded for this tier
+        //       — ensures no subscriber active at notice time is cut off early.
+        uint256 minDeletableAfter = block.timestamp + SUNSET_WINDOW_DURATION() + SUBSCRIBER_PROTECTION_WINDOW();
         uint256 maxSubExpiry = _subscription.getMaxSubscriptionExpiry(record.creatorProxy, record.tierId);
-        uint256 deletableAfter = maxSubExpiry > block.timestamp + window
-            ? maxSubExpiry
-            : block.timestamp + window;
+        uint256 deletableAfter = maxSubExpiry > minDeletableAfter ? maxSubExpiry : minDeletableAfter;
         record.deletableAfter = deletableAfter;
 
         _activeSunsetCount[record.creatorProxy]++;

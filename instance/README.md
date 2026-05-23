@@ -190,7 +190,7 @@ GET /content/:fingerprint
 → <raw ciphertext bytes, Content-Type: application/octet-stream>
 ```
 
-Auth required. No entitlement re-check — content key delivery (`POST /access/key`) already gates on live on-chain subscription/purchase state. Ciphertext is useless without the corresponding key.
+Auth required. Checks on-chain content lifecycle (must be Active or Archived) and moderation state (suspended content returns 403). No entitlement re-check — content key delivery (`POST /access/key`) already gates on live on-chain subscription/purchase state. Ciphertext is useless without the corresponding key.
 
 ---
 
@@ -228,11 +228,15 @@ src/
 │   ├── gate.ts         # Live on-chain subscription/purchase entitlement checks
 │   └── routes.ts       # POST /access/key — key delivery for subscribers and buyers
 ├── creator/
-│   └── routes.ts       # Creator tooling: blob, content, and grant management
+│   └── routes.ts       # Creator tooling: blob, content, and grant management (tier limits from chain)
 ├── content/
-│   └── routes.ts       # GET /content/:fingerprint — ciphertext download
+│   └── routes.ts       # GET /content/:fingerprint — lifecycle + suspension check, ciphertext download
 ├── hoster/
 │   └── routes.ts       # POST /hoster/claim — operator-initiated compensation settlement
+├── moderation/
+│   └── routes.ts       # POST /moderation/report, POST /moderation/determine — report filing and determination
+├── governance/
+│   └── routes.ts       # GET /governance/params — live on-chain governance parameter snapshot
 ├── db/
 │   └── index.ts        # SQLite init and schema (sessions, blobs, content, grants)
 └── index.ts            # Entry point — Hono app, route registration
@@ -257,4 +261,6 @@ src/
 | Migration support (portable data set export/import) | Done |
 | Key rotation (tier-by-tier re-encryption) | Done |
 | Hoster compensation settlement (`POST /hoster/claim`) | Done |
-| Moderation layer (report filing, determination, CSAM path) | Planned |
+| Moderation layer (report filing, determination, CSAM path) | Done |
+| Creator trust tier enforcement (size + rate limits from chain) | Done |
+| Governance parameter read endpoint (`GET /governance/params`) | Done |

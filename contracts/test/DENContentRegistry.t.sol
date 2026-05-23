@@ -269,12 +269,12 @@ contract DENContentRegistryTest is Test {
         contentRegistry.issueSunsetNotice(FP1);
     }
 
-    // deletableAfter is computed from the tier's subscription duration (spec §7.5).
+    // deletableAfter reflects both sequential windows: sunset + subscriber protection (spec §7.5).
     function test_SunsetNoticeEmitsEvent() public {
         vm.prank(alice);
         contentRegistry.registerContent(FP1, TIER_ID);
 
-        uint256 deletableAfter = block.timestamp + DURATION;
+        uint256 deletableAfter = block.timestamp + contentRegistry.SUNSET_WINDOW_DURATION() + contentRegistry.SUBSCRIBER_PROTECTION_WINDOW();
         vm.prank(instanceOp);
         vm.expectEmit(true, true, false, true);
         emit DENContentRegistry.SunsetNoticeIssued(aliceProxy, FP1, deletableAfter);
@@ -289,11 +289,11 @@ contract DENContentRegistryTest is Test {
         contentRegistry.issueSunsetNotice(FP1);
 
         IDENContentRegistry.ContentRecord memory rec = contentRegistry.getContent(FP1);
-        assertEq(rec.deletableAfter, block.timestamp + DURATION);
+        assertEq(rec.deletableAfter, block.timestamp + contentRegistry.SUNSET_WINDOW_DURATION() + contentRegistry.SUBSCRIBER_PROTECTION_WINDOW());
     }
 
-    // Falls back to SUBSCRIBER_PROTECTION_WINDOW when the tier has no registered duration.
-    function test_SunsetNoticeFallsBackToProtectionWindow() public {
+    // With no subscribers, deletableAfter is the spec-minimum floor: both sequential windows (spec §7.5).
+    function test_SunsetNoticeMinimumFloorWithNoSubscribers() public {
         uint256 unknownTierId = 999;
         vm.prank(alice);
         contentRegistry.registerContent(FP1, unknownTierId);
@@ -302,7 +302,7 @@ contract DENContentRegistryTest is Test {
         contentRegistry.issueSunsetNotice(FP1);
 
         IDENContentRegistry.ContentRecord memory rec = contentRegistry.getContent(FP1);
-        assertEq(rec.deletableAfter, block.timestamp + contentRegistry.SUBSCRIBER_PROTECTION_WINDOW());
+        assertEq(rec.deletableAfter, block.timestamp + contentRegistry.SUNSET_WINDOW_DURATION() + contentRegistry.SUBSCRIBER_PROTECTION_WINDOW());
     }
 
     function test_HasActiveSunsetAfterNotice() public {
@@ -329,7 +329,7 @@ contract DENContentRegistryTest is Test {
         contentRegistry.issueSunsetNotice(FP2);
         assertTrue(contentRegistry.hasActiveSunset(aliceProxy));
 
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
 
         vm.prank(alice);
         contentRegistry.deleteContent(FP1);
@@ -379,7 +379,7 @@ contract DENContentRegistryTest is Test {
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
 
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
 
         vm.prank(alice);
         contentRegistry.deleteContent(FP1);
@@ -394,7 +394,7 @@ contract DENContentRegistryTest is Test {
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
 
-        vm.warp(block.timestamp + DURATION - 1);
+        vm.warp(block.timestamp + 2 * DURATION - 1);
 
         vm.prank(alice);
         vm.expectRevert("Subscriber protection window not elapsed");
@@ -415,7 +415,7 @@ contract DENContentRegistryTest is Test {
         contentRegistry.registerContent(FP1, TIER_ID);
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
         vm.prank(alice);
         contentRegistry.deleteContent(FP1);
 
@@ -431,7 +431,7 @@ contract DENContentRegistryTest is Test {
         contentRegistry.registerContent(FP1, TIER_ID);
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
 
         vm.prank(alice);
         vm.expectEmit(true, true, false, false);
@@ -447,7 +447,7 @@ contract DENContentRegistryTest is Test {
         contentRegistry.registerContent(FP1, TIER_ID);
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
 
         // bob is neither the creator's primary wallet nor the registered operator
         vm.prank(bob);
@@ -462,7 +462,7 @@ contract DENContentRegistryTest is Test {
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
 
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
 
         vm.prank(instanceOp);
         contentRegistry.deleteContent(FP1);

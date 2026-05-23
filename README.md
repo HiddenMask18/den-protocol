@@ -14,9 +14,9 @@ Instances are federated and independently operated. Creator identity, subscriber
 
 The protocol specification and architecture are complete. Implementation is underway in two layers:
 
-**On-chain contracts** (`contracts/`) — complete. Nine contracts covering identity (proxy-keyed, rotation-safe), subscriptions (escrow + expiry, ETH and ERC-20), content lifecycle (fingerprint registry, sunset flow), access grant declarations (signed tier→path mappings), purchase state (ETH and ERC-20), hoster compensation (per-creator escrow, progressive bracket rates), and protocol floor violation reporting (auto-suspend, CSAM law enforcement hold path, governance placeholder for conflicted reports). Deployment script included. 285 passing tests.
+**On-chain contracts** (`contracts/`) — complete. Eleven contracts covering identity (proxy-keyed, rotation-safe), subscriptions (escrow + expiry, ETH and ERC-20), content lifecycle (fingerprint registry, sunset flow), access grant declarations (signed tier→path mappings), purchase state (ETH and ERC-20), hoster compensation (per-creator escrow, progressive bracket rates), protocol floor violation reporting (auto-suspend, CSAM law enforcement hold path, governance-resolved conflicted reports), creator trust tier graduation, and on-chain adjustable governance parameters. Deployment script included. 393 passing tests.
 
-**Off-chain instance** (`instance/`) — Phases 1–4c complete. The auth layer, chain client, SQLite schema, ECIES blob encryption, HKDF key derivation, on-chain access gate, subscriber/buyer key delivery, creator tooling (blob upload, content upload, grant publication), portable data set export/import, tier-by-tier key rotation, and hoster compensation settlement are all implemented. Remaining phase: moderation layer (Phase 4d).
+**Off-chain instance** (`instance/`) — Phases 1–5 complete. The auth layer, chain client, SQLite schema, ECIES blob encryption, HKDF key derivation, on-chain access gate, subscriber/buyer key delivery, creator tooling (blob upload, content upload with live tier limits, grant publication), portable data set export/import, tier-by-tier key rotation, hoster compensation settlement, moderation layer (report filing, operator determination), and governance parameter endpoint are all implemented.
 
 ## Contributing
 

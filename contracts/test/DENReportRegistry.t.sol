@@ -172,7 +172,7 @@ contract DENReportRegistryTest is Test {
     function test_DeletedContentNotReportable() public {
         vm.prank(instanceOp);
         contentRegistry.issueSunsetNotice(FP1);
-        vm.warp(block.timestamp + DURATION);
+        vm.warp(block.timestamp + 2 * DURATION);
         vm.prank(alice);
         contentRegistry.deleteContent(FP1);
 

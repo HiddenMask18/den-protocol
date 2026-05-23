@@ -16,10 +16,10 @@ import "../interfaces/IDENGovernanceParams.sol";
 // Each contract calls recordTransaction() at payment time; this contract de-duplicates by
 // proxy and applies the self-exclusion rules from spec §9.3.
 //
-// V1 limitations (governance parameters hardcoded, must become on-chain governed per §10):
-// - Tier thresholds (TIER_1_THRESHOLD etc.) are constants — adjust via governance amendment.
+// V1 limitations:
 // - Lookback window: approximated as all-time in V1. The tier_lookback_window governance
-//   parameter (spec §13.4) will introduce time-bounded expiry in a future version.
+//   parameter (spec §13.4, stored in DENGovernanceParams) is not yet enforced on-chain —
+//   all qualifying transactions count regardless of when they occurred.
 // - Same-instance exclusion (spec §9.3): on-chain enforcement covers only direct
 //   self-subscription and the registered content operator. Broader same-instance wallet
 //   exclusion is declared-plus-auditable (consistent with §7.3 bandwidth model).
