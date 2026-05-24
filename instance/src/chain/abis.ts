@@ -47,6 +47,8 @@ export const identityRegistryAbi = [
 
 // DENSubscription: tracks which subscribers have active paid periods for which creator tiers.
 // isSubscribed incorporates expiry — it returns false once the paid period ends.
+// TierSet is queried via getLogs to enumerate a creator's tiers for the public profile (spec §6.2) —
+// the contract has no enumeration function, so event logs are the only way to discover tier IDs.
 export const subscriptionAbi = [
   {
     name: 'isSubscribed',
@@ -69,6 +71,17 @@ export const subscriptionAbi = [
       { name: 'tierId', type: 'uint256' },
     ],
     outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    name: 'TierSet',
+    type: 'event',
+    inputs: [
+      { name: 'creatorProxy', type: 'address', indexed: true },
+      { name: 'tierId',       type: 'uint256', indexed: true },
+      { name: 'price',        type: 'uint256', indexed: false },
+      { name: 'duration',     type: 'uint256', indexed: false },
+      { name: 'token',        type: 'address', indexed: true },
+    ],
   },
 ] as const;
 

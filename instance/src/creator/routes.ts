@@ -376,6 +376,92 @@ creatorRoutes.get('/content', requireAuth, (c) => {
   );
 });
 
+// ─── Creator profile ──────────────────────────────────────────────────────────
+
+// Sets the creator's public bio (spec §6.2 — creator description on public profile).
+// The handle (pseudonymous name) lives on-chain; bio is instance-side.
+// Upserts the creator_profile row — safe to call multiple times to update the bio.
+creatorRoutes.put('/profile', requireAuth, async (c) => {
+  let body: { bio?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'request body must be valid JSON' }, 400);
+  }
+
+  const { bio } = body;
+  if (bio !== undefined && bio !== null && typeof bio !== 'string') {
+    return c.json({ error: 'bio must be a string or null' }, 400);
+  }
+
+  const proxy = c.get('proxy');
+  getDb().run(
+    `INSERT INTO creator_profile (creator_proxy, bio, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(creator_proxy) DO UPDATE SET bio = excluded.bio, updated_at = excluded.updated_at`,
+    [proxy.toLowerCase(), typeof bio === 'string' ? bio : null, Date.now()],
+  );
+
+  return c.json({ stored: true });
+});
+
+// Marks a content item as publicly visible (spec §6.3) or reverts it to private.
+// Public content is accessible without a subscription and its decryption key is returned
+// in GET /profile/:proxy so any client can decrypt it.
+//
+// isPublic=true requires contentKey (0x-prefixed 64-char hex, the 32-byte symmetric key
+// used to encrypt this content). The creator derives this from their master secret:
+//   deriveKey(masterSecret, "tier:" + tierId) or "item:" + listingId
+//
+// isPublic=false clears the stored key and removes public access.
+creatorRoutes.put('/content/:fingerprint/visibility', requireAuth, async (c) => {
+  const proxy = c.get('proxy');
+  const { fingerprint } = c.req.param();
+
+  let body: { isPublic?: unknown; contentKey?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'request body must be valid JSON' }, 400);
+  }
+
+  const { isPublic, contentKey } = body;
+
+  if (typeof isPublic !== 'boolean') {
+    return c.json({ error: 'isPublic must be a boolean' }, 400);
+  }
+
+  const row = getDb()
+    .query<{ fingerprint: string }, [string, string]>(
+      'SELECT fingerprint FROM content WHERE fingerprint = ? AND LOWER(creator_proxy) = LOWER(?)',
+    )
+    .get(fingerprint, proxy);
+
+  if (!row) {
+    return c.json({ error: 'content not found' }, 404);
+  }
+
+  if (isPublic) {
+    if (!contentKey || typeof contentKey !== 'string') {
+      return c.json({ error: 'contentKey is required when marking content public' }, 400);
+    }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(contentKey)) {
+      return c.json({ error: 'contentKey must be a 0x-prefixed 64-char hex string (32 bytes)' }, 400);
+    }
+    const keyBytes = fromHex(contentKey as `0x${string}`, 'bytes');
+    getDb().run(
+      'UPDATE content SET is_public = 1, public_key = ? WHERE fingerprint = ?',
+      [keyBytes, fingerprint],
+    );
+  } else {
+    getDb().run(
+      'UPDATE content SET is_public = 0, public_key = NULL WHERE fingerprint = ?',
+      [fingerprint],
+    );
+  }
+
+  return c.json({ stored: true });
+});
+
 // ─── Access grants ────────────────────────────────────────────────────────────
 
 creatorRoutes.post('/grant', requireAuth, async (c) => {

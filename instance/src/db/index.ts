@@ -109,11 +109,25 @@ export function initDb(): void {
     }
   }
 
+  // Creator profiles: instance-side display name metadata (spec §6.2).
+  // The handle (pseudonymous name) lives on-chain; bio lives here.
+  // Upserted via PUT /creator/profile.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS creator_profile (
+      creator_proxy TEXT    PRIMARY KEY,
+      bio           TEXT,
+      updated_at    INTEGER NOT NULL
+    )
+  `);
+
   // Content: metadata and ciphertext for each piece of encrypted content hosted on this instance.
   // The fingerprint (SHA-256 hash of the ciphertext) is the stable content identifier —
   // the same fingerprint registered on-chain in DENContentRegistry.
   // ciphertext is nullable: NULL for migration references (is_reference=1) where the
   // actual bytes live on IPFS and have not yet been retrieved by this instance.
+  // is_public=1 means the creator has designated this content publicly visible (spec §6.3).
+  // public_key holds the 32-byte content decryption key when is_public=1 — intentionally
+  // public, so storing it here does not violate the "no stored keys" rule (§4.2).
   db.run(`
     CREATE TABLE IF NOT EXISTS content (
       fingerprint   TEXT    PRIMARY KEY,
@@ -122,7 +136,9 @@ export function initDb(): void {
       ciphertext    BLOB,
       timestamp     INTEGER NOT NULL,
       warnings      TEXT,
-      is_reference  INTEGER NOT NULL DEFAULT 0
+      is_reference  INTEGER NOT NULL DEFAULT 0,
+      is_public     INTEGER NOT NULL DEFAULT 0,
+      public_key    BLOB
     )
   `);
 
@@ -137,6 +153,15 @@ export function initDb(): void {
   // Existing rows are local uploads (is_reference=0).
   if (!contentCols.some((c) => c.name === 'is_reference')) {
     db.run('ALTER TABLE content ADD COLUMN is_reference INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // Migration: add is_public and public_key columns (spec §6.3 — public preview content).
+  // Existing rows are private by default (is_public=0, public_key=NULL).
+  if (!contentCols.some((c) => c.name === 'is_public')) {
+    db.run('ALTER TABLE content ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!contentCols.some((c) => c.name === 'public_key')) {
+    db.run('ALTER TABLE content ADD COLUMN public_key BLOB');
   }
 
   // Access grants: creator-signed declarations mapping tier IDs to key derivation paths.
