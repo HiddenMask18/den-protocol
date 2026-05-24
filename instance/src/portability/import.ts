@@ -103,24 +103,38 @@ export async function importPortableData(
     throw new ImportValidationError('portabilityBlob is not valid hex');
   }
 
+  // Parse emergency portability blob bytes (optional — only present when creator has an emergency wallet).
+  let emPortBlobBytes: Uint8Array | null = null;
+  if (bundle.emergencyPortabilityBlob) {
+    try {
+      emPortBlobBytes = fromHex(bundle.emergencyPortabilityBlob as `0x${string}`, 'bytes');
+    } catch {
+      throw new ImportValidationError('emergencyPortabilityBlob is not valid hex');
+    }
+  }
+
   // Write everything atomically.
   const db = getDb();
   let grantsImported = 0;
   let contentReferencesImported = 0;
 
   const runImport = db.transaction(() => {
-    // Store portability blob and oracle URL. blob (operational) is NOT set — creator re-uploads
+    // Store portability blobs and oracle URL. blob (operational) is NOT set — creator re-uploads
     // after import (re-encrypting instance_share to the new instance's derived key).
     // oracle_url is preserved from the bundle — the creator's oracle does not change on migration.
+    // emergency_portability_blob uses COALESCE: preserve the existing value if the bundle omits it
+    // (backwards-compatible with bundles exported before this field was added).
     // ON CONFLICT: preserve any existing operational blob and update everything else.
     db.run(
-      `INSERT INTO master_secret_blobs (creator_proxy, blob, portability_blob, oracle_url, updated_at)
-       VALUES (?, NULL, ?, ?, ?)
+      `INSERT INTO master_secret_blobs
+         (creator_proxy, blob, portability_blob, emergency_portability_blob, oracle_url, updated_at)
+       VALUES (?, NULL, ?, ?, ?, ?)
        ON CONFLICT(creator_proxy) DO UPDATE SET
-         portability_blob = excluded.portability_blob,
-         oracle_url       = excluded.oracle_url,
-         updated_at       = excluded.updated_at`,
-      [creatorProxy.toLowerCase(), portBlobBytes, bundle.oracleUrl ?? null, Date.now()],
+         portability_blob           = excluded.portability_blob,
+         emergency_portability_blob = COALESCE(excluded.emergency_portability_blob, emergency_portability_blob),
+         oracle_url                 = excluded.oracle_url,
+         updated_at                 = excluded.updated_at`,
+      [creatorProxy.toLowerCase(), portBlobBytes, emPortBlobBytes, bundle.oracleUrl ?? null, Date.now()],
     );
 
     // Upsert verified grants — skip if incoming version ≤ local version to prevent downgrade.
