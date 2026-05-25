@@ -22,11 +22,11 @@
 //   governance resolution. The contract will revert; the error propagates as a 500.
 
 import { Hono } from 'hono';
-import { keccak256, parseEventLogs } from 'viem';
+import { keccak256, parseAbiItem, parseEventLogs } from 'viem';
 import { requireAuth } from '../auth/middleware.ts';
 import { operatorAccount, walletClient } from '../chain/wallet.ts';
 import { chainClient } from '../chain/client.ts';
-import { reportRegistry } from '../chain/contracts.ts';
+import { governance, reportRegistry } from '../chain/contracts.ts';
 import { reportRegistryAbi } from '../chain/abis.ts';
 import { getDb } from '../db/index.ts';
 
@@ -41,7 +41,136 @@ const OUTCOME_MAP: Record<string, number> = {
   FalseReport: 3,
 };
 
+// Defined at module level so parseAbiItem runs once, not per request.
+const reportFiledEvent = parseAbiItem(
+  'event ReportFiled(uint256 indexed reportId, bytes32 indexed fingerprint, address indexed reporterProxy, uint8 category, bool operatorConflict)',
+);
+
 export const moderationRoutes = new Hono<SessionEnv>();
+
+// Returns all reports filed against this creator's content, with full evidence (spec §12.4).
+//
+// The spec requires the Creator to receive, on suspension: full report contents, the pseudonymous
+// identifier of the reporting Subscriber, the violation category, and the response window duration.
+// This endpoint satisfies that requirement by giving the authenticated Creator a single query
+// covering all their fingerprints hosted on this instance.
+//
+// For each report the creator gets:
+//   - On-chain fields: reportId, fingerprint, reporterProxy, accessTimestamp, category,
+//     evidenceHash, status, filedAt, operatorConflict
+//   - Off-chain evidence bytes (base64): present when the subscriber submitted via
+//     POST /moderation/report; null if the subscriber filed directly on-chain
+//   - creatorResponseWindowSeconds: from on-chain governance (spec §13.4)
+//
+// Status 0 = Active means the fingerprint is currently suspended; those are the reports requiring
+// a creator response. The full history (Upheld, Dismissed, FalseReport, Reinstated) is also
+// included so the creator has an audit trail.
+moderationRoutes.get('/creator/reports', requireAuth, async (c) => {
+  const proxy = c.get('proxy');
+
+  // All fingerprints this creator has uploaded to this instance.
+  type FpRow = { fingerprint: string };
+  const fingerprints = getDb()
+    .query<FpRow, [string]>(
+      'SELECT fingerprint FROM content WHERE LOWER(creator_proxy) = LOWER(?)',
+    )
+    .all(proxy)
+    .map((r) => r.fingerprint as `0x${string}`);
+
+  // creator_response_window is required by §12.4 regardless of whether any reports exist.
+  let creatorResponseWindow: bigint;
+  try {
+    creatorResponseWindow = await governance.read.getCreatorResponseWindow();
+  } catch {
+    return c.json({ error: 'governance read failed — check RPC connectivity' }, 500);
+  }
+
+  if (fingerprints.length === 0) {
+    return c.json({ reports: [], creatorResponseWindowSeconds: creatorResponseWindow.toString() });
+  }
+
+  // Scan ReportFiled events per fingerprint in parallel. fingerprint is indexed (topic2) so the
+  // RPC node filters server-side — only matching logs are returned for each call.
+  let logBatches: { reportId: bigint; fingerprint: `0x${string}` }[][];
+  try {
+    logBatches = await Promise.all(
+      fingerprints.map(async (fp) => {
+        const logs = await chainClient.getLogs({
+          address: reportRegistry.address,
+          event: reportFiledEvent,
+          args: { fingerprint: fp },
+          fromBlock: 0n,
+          toBlock: 'latest',
+        });
+        return logs
+          .filter((l) => l.args.reportId !== undefined)
+          .map((l) => ({ reportId: l.args.reportId!, fingerprint: fp }));
+      }),
+    );
+  } catch {
+    return c.json({ error: 'chain scan failed — check RPC connectivity' }, 500);
+  }
+
+  // Flatten to unique reportIds. A fingerprint can accumulate multiple reports.
+  const seen = new Set<string>();
+  const uniqueReports: { reportId: bigint; fingerprint: `0x${string}` }[] = [];
+  for (const batch of logBatches) {
+    for (const r of batch) {
+      const key = r.reportId.toString();
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueReports.push(r);
+      }
+    }
+  }
+
+  if (uniqueReports.length === 0) {
+    return c.json({ reports: [], creatorResponseWindowSeconds: creatorResponseWindow.toString() });
+  }
+
+  // Fetch full on-chain report data for all reports in one parallel batch.
+  type OnChainReport = Awaited<ReturnType<typeof reportRegistry.read.getReport>>;
+  let onChainReports: OnChainReport[];
+  try {
+    onChainReports = await Promise.all(
+      uniqueReports.map(({ reportId }) => reportRegistry.read.getReport([reportId])),
+    );
+  } catch {
+    return c.json({ error: 'failed to fetch report details from chain' }, 500);
+  }
+
+  // Join each on-chain report with its off-chain evidence bytes (stored by POST /moderation/report).
+  // Evidence is null if the subscriber filed directly on-chain without submitting via this instance.
+  type EvidenceRow = { evidence: Uint8Array };
+  const result = onChainReports.map((report) => {
+    const row = getDb()
+      .query<EvidenceRow, [string]>(
+        'SELECT evidence FROM report_evidence WHERE LOWER(evidence_hash) = LOWER(?)',
+      )
+      .get(report.evidenceHash);
+
+    return {
+      reportId:         report.id.toString(),
+      fingerprint:      report.fingerprint,
+      reporterProxy:    report.reporterProxy,
+      accessTimestamp:  report.accessTimestamp.toString(),
+      category:         report.category,
+      evidenceHash:     report.evidenceHash,
+      status:           report.status,
+      filedAt:          report.filedAt.toString(),
+      operatorConflict: report.operatorConflict,
+      evidence:         row ? Buffer.from(row.evidence).toString('base64') : null,
+    };
+  });
+
+  // Most-recent reports first.
+  result.sort((a, b) => {
+    const diff = BigInt(b.filedAt) - BigInt(a.filedAt);
+    return diff > 0n ? 1 : diff < 0n ? -1 : 0;
+  });
+
+  return c.json({ reports: result, creatorResponseWindowSeconds: creatorResponseWindow.toString() });
+});
 
 // Submit off-chain evidence for a protocol floor violation.
 // Returns the evidenceHash the subscriber must pass to DENReportRegistry.fileReport on-chain.

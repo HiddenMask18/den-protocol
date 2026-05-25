@@ -289,6 +289,25 @@ export const reportRegistryAbi = [
     type: 'event',
     inputs: [{ name: 'reportId', type: 'uint256', indexed: true }],
   },
+  {
+    name: 'ReportFiled',
+    type: 'event',
+    inputs: [
+      { name: 'reportId',         type: 'uint256', indexed: true  },
+      { name: 'fingerprint',      type: 'bytes32', indexed: true  },
+      { name: 'reporterProxy',    type: 'address', indexed: true  },
+      { name: 'category',         type: 'uint8',   indexed: false },
+      { name: 'operatorConflict', type: 'bool',    indexed: false },
+    ],
+  },
+  {
+    name: 'ContentSuspended',
+    type: 'event',
+    inputs: [
+      { name: 'fingerprint', type: 'bytes32', indexed: true },
+      { name: 'reportId',    type: 'uint256', indexed: true },
+    ],
+  },
 ] as const;
 
 // DENTrustTier: tracks verified distinct participant counts for creator tier graduation (spec §9).
