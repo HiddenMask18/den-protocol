@@ -1,22 +1,29 @@
-// Creator oracle client — fetches the creator's key share for the threshold split.
+// Creator oracle client — DORMANT (V1 does not use the oracle model).
 //
-// Each creator operates an independent oracle that holds creator_share (one half of an XOR
-// split of the master secret). The instance holds instance_share (decrypted from the
-// operational blob). Neither half alone is sufficient to derive content keys. Key delivery
-// requires cooperation from both the instance and the creator's oracle.
+// This file is retained for reference and as a V2 starting point. The threshold-split oracle
+// design was removed from V1 for the following reasons:
 //
-// The oracle independently verifies on-chain subscription or purchase state before returning
-// creator_share. It does not trust the instance's entitlement claims — it reads the chain
-// directly. This means a compelled hoster cannot forge entitlement proofs to extract
-// creator_share: the oracle would reject a request for a subscription that doesn't exist.
+//   1. Organisational separation cannot be cryptographically enforced.
+//      The oracle relies on the creator operating an independent service. Nothing in the
+//      protocol prevents a compliant or compromised hoster from running the oracle themselves,
+//      silently collapsing the "two-party" split into one.
 //
-// Cache: creator_share is cached in memory for 5 minutes per creator. The subscription
-// state check in gate.ts is always a live on-chain read — the cache only avoids repeated
-// oracle round-trips for the same creator during an active window. If a creator takes their
-// oracle offline, key delivery for that creator stops within one cache window (5 minutes).
+//   2. Creator liveness creates a single point of failure.
+//      If the creator's oracle is offline or deleted, all subscribers lose decryption access
+//      immediately. The cure is worse than the disease — a jurisdiction-ordered takedown of
+//      the instance would still achieve its goal by targeting the oracle instead.
 //
-// The cache is intentionally in-memory only and never persisted to SQLite. A process
-// restart clears it — one fresh oracle call per creator per boot is acceptable.
+//   3. The problem is jurisdictional availability, not key custodianship.
+//      The actual defense against legal compulsion is: (a) E2EE at rest so the hoster stores
+//      only ciphertext; (b) portability so a creator can migrate to a different jurisdiction
+//      in hours; (c) key rotation so a seized instance's copy of the blob becomes useless.
+//      Adding an organisational split on top of that does not strengthen these guarantees.
+//
+// V2 path: if threshold decryption with a decentralised custodian network (e.g. Lit Protocol
+// or Medusa Network) becomes production-ready, the oracle design should be revisited using
+// cryptographically enforced access policies rather than per-creator HTTP services.
+//
+// Nothing in V1 imports this file.
 
 import { fromHex } from 'viem';
 

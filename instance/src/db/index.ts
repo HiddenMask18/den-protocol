@@ -61,7 +61,7 @@ export function initDb(): void {
       blob                       BLOB,
       portability_blob           BLOB,
       emergency_portability_blob BLOB,
-      oracle_url                 TEXT,
+      oracle_url                 TEXT,    -- unused in V1; retained for schema compatibility
       updated_at                 INTEGER NOT NULL
     )
   `);
@@ -79,7 +79,8 @@ export function initDb(): void {
     db.run('ALTER TABLE master_secret_blobs ADD COLUMN emergency_portability_blob BLOB');
   }
 
-  // Migration: add oracle_url column (spec §4.1 threshold split — creator oracle URL).
+  // Migration: add oracle_url column — unused in V1 (threshold split removed); retained for
+  // schema compatibility with databases written before the oracle model was removed.
   if (!blobCols.some((c) => c.name === 'oracle_url')) {
     db.run('ALTER TABLE master_secret_blobs ADD COLUMN oracle_url TEXT');
   }

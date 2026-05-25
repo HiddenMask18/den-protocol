@@ -68,7 +68,6 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
     operationalBlob?: string;
     portabilityBlob?: string;
     emergencyPortabilityBlob?: string;
-    oracleUrl?: string;
   };
   try {
     body = await c.req.json();
@@ -76,7 +75,7 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
     return c.json({ error: 'request body must be valid JSON' }, 400);
   }
 
-  const { operationalBlob, portabilityBlob, emergencyPortabilityBlob, oracleUrl } = body;
+  const { operationalBlob, portabilityBlob, emergencyPortabilityBlob } = body;
 
   // Minimum valid ECIES blob: 33 (ephPub) + 12 (nonce) + 16 (authtag for empty plaintext) = 61 bytes
   // = 122 hex chars + 0x prefix = 124 chars total.
@@ -99,19 +98,6 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
     if (emErr) return c.json({ error: emErr }, 400);
   }
 
-  // oracleUrl is required — the creator must run an oracle holding their key share.
-  if (!oracleUrl || typeof oracleUrl !== 'string') {
-    return c.json({ error: 'oracleUrl is required (URL of the creator\'s key oracle)' }, 400);
-  }
-  try {
-    const u = new URL(oracleUrl);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') {
-      return c.json({ error: 'oracleUrl must be an http or https URL' }, 400);
-    }
-  } catch {
-    return c.json({ error: 'oracleUrl is not a valid URL' }, 400);
-  }
-
   const proxy = c.get('proxy');
   const opBytes = fromHex(operationalBlob as `0x${string}`, 'bytes');
   const portBytes = fromHex(portabilityBlob as `0x${string}`, 'bytes');
@@ -120,15 +106,14 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
     : null;
 
   // Verify the operational blob was encrypted to this creator's instance-derived key and
-  // decrypts to exactly 32 bytes (the instance_share in the threshold split model).
-  // The plaintext is zeroed immediately in the finally block.
-  let instanceShare: Uint8Array | undefined;
+  // decrypts to exactly 32 bytes (the master_secret). Zeroed immediately after the check.
+  let masterSecret: Uint8Array | undefined;
   try {
     const { privKey } = deriveCreatorBlobKey(proxy);
-    instanceShare = await decryptBlob(opBytes, privKey);
-    if (instanceShare.length !== 32) {
+    masterSecret = await decryptBlob(opBytes, privKey);
+    if (masterSecret.length !== 32) {
       return c.json(
-        { error: 'operationalBlob must decrypt to exactly 32 bytes (instance_share)' },
+        { error: 'operationalBlob must decrypt to exactly 32 bytes (master_secret)' },
         400,
       );
     }
@@ -138,7 +123,7 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
       400,
     );
   } finally {
-    instanceShare?.fill(0);
+    masterSecret?.fill(0);
   }
 
   // If an emergency portability blob was provided, store it; otherwise preserve any existing one.
@@ -146,15 +131,14 @@ creatorRoutes.put('/blob', requireAuth, async (c) => {
   // when the incoming upload does not include one.
   getDb().run(
     `INSERT INTO master_secret_blobs
-       (creator_proxy, blob, portability_blob, emergency_portability_blob, oracle_url, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+       (creator_proxy, blob, portability_blob, emergency_portability_blob, updated_at)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(creator_proxy) DO UPDATE SET
        blob                       = excluded.blob,
        portability_blob           = excluded.portability_blob,
        emergency_portability_blob = COALESCE(excluded.emergency_portability_blob, emergency_portability_blob),
-       oracle_url                 = excluded.oracle_url,
        updated_at                 = excluded.updated_at`,
-    [proxy, opBytes, portBytes, emPortBytes, oracleUrl, Date.now()],
+    [proxy, opBytes, portBytes, emPortBytes, Date.now()],
   );
 
   return c.json({ stored: true });

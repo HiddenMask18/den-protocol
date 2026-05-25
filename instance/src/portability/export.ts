@@ -41,7 +41,6 @@ export type PortableDataBundle = {
   };
   portabilityBlob: string;
   emergencyPortabilityBlob: string | null;
-  oracleUrl: string | null;
   contentReferences: Array<{
     fingerprint: string;
     tierId: string;
@@ -85,15 +84,14 @@ const purchasedEvent = parseAbiItem(
 export async function assemblePortableData(creatorProxy: string): Promise<PortableDataBundle> {
   const proxy = creatorProxy as `0x${string}`;
 
-  // 1. Portability blob, emergency portability blob, and oracle URL.
+  // 1. Portability blob and emergency portability blob.
   type BlobRow = {
     portability_blob: Uint8Array | null;
     emergency_portability_blob: Uint8Array | null;
-    oracle_url: string | null;
   };
   const blobRow = getDb()
     .query<BlobRow, [string]>(
-      'SELECT portability_blob, emergency_portability_blob, oracle_url FROM master_secret_blobs WHERE creator_proxy = ?',
+      'SELECT portability_blob, emergency_portability_blob FROM master_secret_blobs WHERE creator_proxy = ?',
     )
     .get(creatorProxy);
 
@@ -107,7 +105,6 @@ export async function assemblePortableData(creatorProxy: string): Promise<Portab
   const emergencyPortabilityBlob = blobRow.emergency_portability_blob
     ? toHex(new Uint8Array(blobRow.emergency_portability_blob))
     : null;
-  const oracleUrl = blobRow.oracle_url;
 
   // 2. Identity record — current handle from registry.
   const handle = await identityRegistry.read.handleOf([proxy]);
@@ -205,7 +202,6 @@ export async function assemblePortableData(creatorProxy: string): Promise<Portab
     identityRecord: { proxy: creatorProxy, handle },
     portabilityBlob,
     emergencyPortabilityBlob,
-    oracleUrl,
     contentReferences,
     accessGrants,
     subscribers,
