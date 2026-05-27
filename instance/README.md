@@ -31,6 +31,26 @@ cd contracts && forge script script/Deploy.s.sol --rpc-url http://localhost:8545
 
 Then paste the deployed addresses into `.env`.
 
+### Base Sepolia / production
+
+For a real deployment against Base Sepolia (testnet) or Base mainnet:
+
+```bash
+# Testnet
+forge script script/Deploy.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --verify
+
+# Mainnet
+forge script script/Deploy.s.sol --rpc-url $BASE_RPC_URL --broadcast --verify
+```
+
+Update `.env` with the deployed addresses and set `CHAIN=base` and `RPC_URL` to your RPC endpoint.
+
+### Operator setup
+
+The instance operator wallet must be a registered DEN participant. Call `DENIdentityRegistry.register()` with the operator wallet to deploy its identity proxy.
+
+For each creator hosted, **the creator** calls `DENContentRegistry.setContentOperator(instanceOpProxy)` to authorize this instance's operator wallet. This is required before sunset notices can be issued and before `POST /hoster/claim` will succeed for that creator.
+
 ## Running
 
 ```bash
@@ -65,6 +85,30 @@ Body: { wallet: "0x...", nonce: "abc123...", signature: "0x..." }
 ```
 
 Sessions expire after 24 hours. The returned `proxy` is the stable DEN identity — it doesn't change on wallet rotation.
+
+---
+
+### Public discovery
+
+Unauthenticated. No wallet, session, or account required (spec §6.5).
+
+```
+GET /profile/:proxy
+→ {
+    proxy:    "0x...",
+    handle:   "alice" | null,
+    bio:      "..." | null,
+    tiers: [{ tierId, price, duration, token }],
+    publicContent: [{
+      fingerprint, tierId, timestamp,
+      warnings: ["tag"] | null,
+      contentKey: "0x..."    // 32-byte key — client decrypts ciphertext locally
+    }],
+    contentWarnings: [{ fingerprint, tierId, warnings: ["tag"] }]
+  }
+```
+
+`tiers` is sourced from on-chain `TierSet` events (price in wei, duration in seconds, token is the ERC-20 address or `address(0)` for ETH). `publicContent` includes the decryption key so clients can fetch and decrypt the ciphertext from `GET /content/:fingerprint` without auth. `contentWarnings` covers paywalled posts — metadata only, no key.
 
 ---
 
@@ -158,6 +202,27 @@ DELETE /creator/content/:fingerprint
 → 204 No Content
 ```
 
+**Creator profile**
+
+Sets the instance-stored bio displayed on the public profile. Optional — creators without a bio return `bio: null`.
+
+```
+PUT /creator/profile
+Body: { bio: "..." | null }
+→ { stored: true }
+```
+
+**Public content designation**
+
+Marks a content item as publicly visible (accessible without a subscription) or reverts it to private. When marking public, the creator supplies the symmetric content key so the instance can include it in `GET /profile/:proxy`. The key is derived client-side: `deriveKey(masterSecret, "tier:" + tierId)`.
+
+```
+PUT /creator/content/:fingerprint/visibility
+Body: { isPublic: true,  contentKey: "0x<64 hex chars>" }
+   or { isPublic: false }
+→ { stored: true }
+```
+
 ---
 
 ### Hoster compensation
@@ -204,6 +269,100 @@ Body: { type: "subscription", creatorProxy: "0x...", tierId: "1" }
 ```
 
 The instance checks on-chain entitlement live (no caching), decrypts the creator's master secret blob, derives one 32-byte key per derivation path in the access grant, and returns them. Keys are HKDF-SHA256 outputs — the subscriber uses them to decrypt downloaded ciphertext locally.
+
+---
+
+### Moderation
+
+The protocol floor violation reporting layer (spec §12). Suspension state is checked on-chain — suspended content returns 403 from `GET /content/:fingerprint`.
+
+**Report evidence submission (subscriber)**
+
+Before calling `fileReport` on-chain, a subscriber optionally submits evidence to the instance. The instance stores it and returns a hash the subscriber includes in the on-chain call.
+
+```
+POST /moderation/report
+Body: { evidence: "<base64 bytes>" }
+→ { evidenceHash: "0x...", reportRegistryAddress: "0x..." }
+```
+
+The subscriber then calls `DENReportRegistry.fileReport(contentProxy, fingerprint, violationType, evidenceHash)` with their own wallet. The instance cannot relay this — the contract checks `msg.sender`.
+
+**Report inspection (unauthenticated)**
+
+```
+GET /moderation/report/:id
+→ { reportId, contentProxy, fingerprint, reporter, violationType,
+    status, evidenceHash, determinedAt, isLawEnforcementHold }
+```
+
+**Creator report discovery (creator auth required)**
+
+Returns all active reports against the authenticated creator's content, including off-chain evidence bytes and the response window from governance.
+
+```
+GET /moderation/creator/reports
+→ {
+    creatorResponseWindowSeconds: "...",
+    reports: [{
+      reportId, fingerprint, reporter, violationType, status,
+      evidenceHash, evidence: "<base64>" | null,
+      determinedAt, isLawEnforcementHold
+    }]
+  }
+```
+
+**Operator determination (operator only)**
+
+```
+POST /moderation/report/:id/determine
+Body: { outcome: "Upheld" | "Dismissed" | "FalseReport" }
+→ { txHash: "0x..." }
+```
+
+Operator-conflicted reports (where the reporter is the content operator) cannot be determined here — the contract reverts. Those require governance to resolve (spec §12.2).
+
+**Law enforcement hold (operator only)**
+
+```
+POST   /moderation/report/:id/le-hold    → { txHash }   // set LE hold (CSAM path)
+DELETE /moderation/report/:id/le-hold    → { txHash }   // remove LE hold
+```
+
+**Reinstatement after CSAM expiry (any authenticated participant)**
+
+```
+POST /moderation/report/:id/reinstate
+→ { txHash: "0x..." }
+```
+
+Permissionless on-chain after the CSAM suspension duration elapses — the operator cannot block it.
+
+---
+
+### Governance
+
+Read-only snapshot of all live on-chain governance parameters (spec §10). Unauthenticated.
+
+```
+GET /governance/params
+→ {
+    identity:     { wallet_rotation_delay, rotation_announcement_cooldown,
+                    handle_change_allowance, handle_change_period, handle_alias_retention_window },
+    content:      { subscriber_protection_window, sunset_window_duration },
+    compensation: { storage_compensation_lookback,
+                    instance_size_brackets: { micro_max, small_max, medium_max } },
+    trust_tiers:  { thresholds: { tier_1, tier_2, tier_3 }, lookback_window,
+                    post_size_limits: { tier_0, tier_1, tier_2, tier_3 },
+                    post_rate_limits: { tier_0, tier_1, tier_2, tier_3 } },
+    reporting:    { creator_response_window, csam_suspension_duration },
+    fees:         { protocol_fee_bps },
+    misc:         { inactivity_grace_period, batch_settlement_interval,
+                    subscription_expiry_grace_period, resolver_cache_ttl }
+  }
+```
+
+All numeric values are strings (BigInt serialization). `lookback_window` returns `"all-time"` when 0. `post_rate_limits.tier_3` returns `"unlimited"` when unbounded.
 
 ## Project Structure
 

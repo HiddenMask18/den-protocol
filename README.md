@@ -34,6 +34,7 @@ git submodule update --init
 - [MANIFESTO.md](./MANIFESTO.md) — why this exists and what it stands for
 - [den-architecture.md](./spec/den-architecture.md) — architecture decisions and design rationale
 - [den-spec.md](./spec/den-spec.md) — protocol specification v0.1-draft
+- [instance/README.md](./instance/README.md) — how to deploy and run an instance, full API reference
 
 ## License
 
