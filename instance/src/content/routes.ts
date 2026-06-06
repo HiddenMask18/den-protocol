@@ -1,6 +1,9 @@
-// Content download route — serves encrypted content ciphertext to authenticated participants.
+// Content routes — encrypted ciphertext download, plus the subscriber-facing content inventory.
 //
-// GET /content/:fingerprint
+// GET /content/:fingerprint        — download ciphertext (auth required for private content)
+// GET /content/by-creator/:proxy   — list a creator's content for a tier the caller holds
+//
+// --- GET /content/:fingerprint ---
 //
 // Returns the raw ciphertext bytes for a given content fingerprint. Authentication is required
 // but subscription entitlement is NOT re-checked here — that gate is enforced by POST /access/key,
@@ -15,8 +18,94 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/index.ts';
 import { reportRegistry } from '../chain/contracts.ts';
+import { requireAuth } from '../auth/middleware.ts';
+import { checkSubscriptionAccess } from '../access/gate.ts';
 
-export const contentRoutes = new Hono();
+// Declares the context variables set by requireAuth so TypeScript knows their types on
+// the routes that use it (the public download route below does its own inline auth).
+type SessionEnv = {
+  Variables: {
+    proxy: string;
+    wallet: string;
+  };
+};
+
+export const contentRoutes = new Hono<SessionEnv>();
+
+// Subscriber-facing content inventory for one creator + tier.
+//
+// GET /content/by-creator/:proxy?tierId=N   (requireAuth)
+//
+// Lets an authenticated Subscriber enumerate the content a Creator published to a tier they
+// hold. GET /profile/:proxy (unauthenticated) deliberately exposes only public content and
+// *warned* paywalled posts as teasers — an unwarned paywalled post is invisible there. Without
+// this endpoint a subscribed viewer cannot discover those posts to request keys for, so the
+// subscriber feed (DESIGN Flow 5, /feed) cannot be assembled.
+//
+// Entitlement is gated per-tier by the same checkSubscriptionAccess() used by POST /access/key:
+// the caller must hold an active on-chain subscription to (:proxy, tierId) and the creator must
+// have a signature-valid access grant for it. This route is the sibling of key delivery — same
+// gate, same per-tier model — returning the content inventory instead of the keys.
+//
+// Returns metadata only (fingerprint, tierId, timestamp, warnings) — no ciphertext, no keys.
+// Suspension is not re-checked here (that would cost a chain read per item); the per-fingerprint
+// GET /content/:fingerprint download gate remains the enforcement point for suspended content.
+//
+// The response is an object envelope, not a bare array, so cursor pagination can be added later
+// without a breaking change. v1 returns the full tier inventory with nextCursor: null.
+contentRoutes.get('/by-creator/:proxy', requireAuth, async (c) => {
+  const { proxy } = c.req.param();
+  const tierId = c.req.query('tierId');
+
+  if (!/^0x[0-9a-fA-F]{40}$/.test(proxy)) {
+    return c.json({ error: 'proxy must be a 0x-prefixed 40-char hex Ethereum address' }, 400);
+  }
+  if (tierId === undefined) {
+    return c.json({ error: 'tierId query parameter is required' }, 400);
+  }
+
+  // Parse before the chain call so a non-numeric tierId yields a 400, not a 500.
+  let numericTierId: bigint;
+  try {
+    numericTierId = BigInt(tierId);
+  } catch {
+    return c.json({ error: 'tierId must be a numeric string' }, 400);
+  }
+
+  const participantProxy = c.get('proxy') as `0x${string}`;
+  const creator = proxy as `0x${string}`;
+
+  // Live on-chain entitlement check — identical gate to POST /access/key (spec §4.1).
+  let gateResult;
+  try {
+    gateResult = await checkSubscriptionAccess(participantProxy, creator, numericTierId);
+  } catch {
+    return c.json({ error: 'failed to verify on-chain entitlement — check chain connectivity' }, 500);
+  }
+  if (!gateResult.ok) {
+    return c.json({ error: gateResult.reason }, 403);
+  }
+
+  type Row = { fingerprint: string; tier_id: string; timestamp: number; warnings: string | null };
+  const rows = getDb()
+    .query<Row, [string, string]>(
+      `SELECT fingerprint, tier_id, timestamp, warnings
+       FROM content
+       WHERE LOWER(creator_proxy) = LOWER(?) AND tier_id = ?
+       ORDER BY timestamp DESC`,
+    )
+    .all(creator, numericTierId.toString());
+
+  return c.json({
+    content: rows.map((r) => ({
+      fingerprint: r.fingerprint,
+      tierId: r.tier_id,
+      timestamp: r.timestamp,
+      warnings: r.warnings ? (JSON.parse(r.warnings) as string[]) : null,
+    })),
+    nextCursor: null,
+  });
+});
 
 contentRoutes.get('/:fingerprint', async (c) => {
   const { fingerprint } = c.req.param();

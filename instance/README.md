@@ -259,6 +259,26 @@ Auth required. Checks on-chain content lifecycle (must be Active or Archived) an
 
 ---
 
+### Content listing (subscriber)
+
+Enumerates a creator's content for one tier the caller is subscribed to. `GET /profile/:proxy` (unauthenticated) only exposes public content and *warned* paywalled posts — an unwarned paywalled post is invisible there, so a subscribed viewer needs this endpoint to discover what to request keys for. This is the data source for the subscriber feed.
+
+```
+GET /content/by-creator/:proxy?tierId=1
+→ {
+    content: [{
+      fingerprint, tierId,
+      timestamp,                  // Unix ms, newest first
+      warnings: ["tag"] | null
+    }],
+    nextCursor: null              // reserved for future pagination; always null in v1
+  }
+```
+
+Auth required. Entitlement is gated per-tier by the same live on-chain check as `POST /access/key` — the caller must hold an active subscription to `(proxy, tierId)` and the creator must have a signature-valid access grant for it, else `403`. Metadata only — no ciphertext, no keys. Suspension is not re-checked here (the per-fingerprint download gate enforces it). The response is an object envelope so cursor pagination can be added without a breaking change.
+
+---
+
 ### Key delivery (subscriber/buyer)
 
 ```
@@ -389,7 +409,7 @@ src/
 ├── creator/
 │   └── routes.ts       # Creator tooling: blob, content, and grant management (tier limits from chain)
 ├── content/
-│   └── routes.ts       # GET /content/:fingerprint — lifecycle + suspension check, ciphertext download
+│   └── routes.ts       # GET /content/:fingerprint download + GET /content/by-creator/:proxy listing
 ├── hoster/
 │   └── routes.ts       # POST /hoster/claim — operator-initiated compensation settlement
 ├── moderation/
