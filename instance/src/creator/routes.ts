@@ -8,6 +8,7 @@
 //   PUT  /creator/blob            Upload pre-encrypted master secret blobs (dual-blob model)
 //   GET  /creator/blob            Check whether blob has been uploaded
 //   GET  /creator/portability-blob  Return the wallet-encrypted portability blob for migration
+//   GET  /creator/url-signature   Countersignature for DENIdentityImpl.updateInstanceURL
 //   POST /creator/content         Upload encrypted content; returns SHA-256 fingerprint
 //   GET  /creator/content         List content metadata for this creator
 //   POST /creator/grant           Publish a signed access grant declaration locally
@@ -28,12 +29,13 @@
 // creator's responsibility — the instance only reads on-chain state (publicClient is read-only).
 
 import { Hono } from 'hono';
-import { fromHex, toHex } from 'viem';
+import { encodeAbiParameters, fromHex, keccak256, toHex } from 'viem';
 import { sha256 } from '@noble/hashes/sha256';
 import { requireAuth } from '../auth/middleware.ts';
 import { getDb } from '../db/index.ts';
 import { decryptBlob, deriveCreatorBlobKey } from '../crypto/blob.ts';
-import { getPrimaryWallet, getIsEmergencyWallet, governance, trustTier } from '../chain/contracts.ts';
+import { getPrimaryWallet, getIsEmergencyWallet, getUrlUpdateNonce, governance, identityRegistry, trustTier } from '../chain/contracts.ts';
+import { operatorAccount } from '../chain/wallet.ts';
 import { getGrant, upsertGrant, verifyGrantSignature, type StoredGrant } from '../grants/store.ts';
 
 type SessionEnv = {
@@ -199,6 +201,72 @@ creatorRoutes.get('/portability-blob', requireAuth, async (c) => {
 
   return new Response(new Uint8Array(row.portability_blob), {
     headers: { 'Content-Type': 'application/octet-stream' },
+  });
+});
+
+// ─── Instance URL countersignature ────────────────────────────────────────────
+
+// Returns the countersignature a creator needs to set this instance as their home instance
+// on-chain. DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)
+// requires the receiving instance's primary wallet to sign:
+//
+//   keccak256(abi.encode("DEN-url-confirm", creatorProxy, url, urlUpdateNonce))
+//
+// as an EIP-191 personal message. The instance only ever countersigns its own configured
+// public URL (INSTANCE_PUBLIC_URL) — never a caller-supplied one — because the signature is
+// the instance's confirmation that it hosts this creator at that URL.
+//
+// The nonce is read live from the creator's proxy contract; each successful updateInstanceURL
+// increments it, so a stale signature cannot be replayed. The signature commits to the
+// creator's proxy, so it cannot be used by anyone else.
+//
+// Requirements:
+//   INSTANCE_PUBLIC_URL set in the environment (the URL creators record on-chain)
+//   The operator wallet registered as a DEN participant (its proxy is receivingInstanceProxy)
+creatorRoutes.get('/url-signature', requireAuth, async (c) => {
+  const url = process.env.INSTANCE_PUBLIC_URL;
+  if (!url) {
+    return c.json(
+      { error: 'instance is not configured for on-chain URL confirmation — operator must set INSTANCE_PUBLIC_URL' },
+      503,
+    );
+  }
+
+  const proxy = c.get('proxy') as `0x${string}`;
+
+  let receivingInstanceProxy: `0x${string}`;
+  let nonce: bigint;
+  try {
+    const registered = await identityRegistry.read.isRegistered([operatorAccount.address]);
+    if (!registered) {
+      return c.json(
+        { error: 'instance operator wallet is not a registered DEN participant — operator must call register()' },
+        503,
+      );
+    }
+    [receivingInstanceProxy, nonce] = await Promise.all([
+      identityRegistry.read.getProxy([operatorAccount.address]),
+      getUrlUpdateNonce(proxy),
+    ]);
+  } catch {
+    return c.json({ error: 'failed to read URL confirmation state from chain — check chain connectivity' }, 500);
+  }
+
+  // Matches DENIdentityImpl.updateInstanceURL: structHash over (label, proxy, url, nonce),
+  // then EIP-191 personal-sign of the raw 32-byte hash.
+  const structHash = keccak256(
+    encodeAbiParameters(
+      [{ type: 'string' }, { type: 'address' }, { type: 'string' }, { type: 'uint256' }],
+      ['DEN-url-confirm', proxy, url, nonce],
+    ),
+  );
+  const instanceSig = await operatorAccount.signMessage({ message: { raw: structHash } });
+
+  return c.json({
+    url,
+    receivingInstanceProxy,
+    instanceSig,
+    nonce: nonce.toString(),
   });
 });
 
@@ -393,10 +461,19 @@ creatorRoutes.put('/profile', requireAuth, async (c) => {
 // in GET /profile/:proxy so any client can decrypt it.
 //
 // isPublic=true requires contentKey (0x-prefixed 64-char hex, the 32-byte symmetric key
-// used to encrypt this content). The creator derives this from their master secret:
-//   deriveKey(masterSecret, "tier:" + tierId) or "item:" + listingId
+// used to encrypt this content). This MUST be a fresh random per-post key generated when
+// the content was encrypted for public posting — NEVER a derivation-path key. Publishing
+// deriveKey(masterSecret, "tier:" + tierId) would unlock every post in that tier: private
+// ciphertext is served on authentication alone (see content/routes.ts) and fingerprints
+// are enumerable from on-chain ContentRegistered events. The instance stores the key as
+// given and cannot verify derivation — key discipline is the client's responsibility.
 //
-// isPublic=false clears the stored key and removes public access.
+// isPublic=false clears the stored key and removes public access. It does not un-publish
+// anything: the key was already public, so clients treat visibility changes as
+// re-encryption events (new blob, new fingerprint), not metadata flips.
+//
+// Content posted as public from the start uploads with X-Tier-Id: 0 (reserved no-tier
+// convention; clients number real subscription tiers from 1).
 creatorRoutes.put('/content/:fingerprint/visibility', requireAuth, async (c) => {
   const proxy = c.get('proxy');
   const { fingerprint } = c.req.param();

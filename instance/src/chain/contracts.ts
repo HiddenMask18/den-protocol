@@ -109,3 +109,13 @@ export async function getIsEmergencyWallet(proxyAddress: `0x${string}`, wallet: 
     args: [wallet],
   });
 }
+
+// Current URL-update nonce for a creator's proxy. The instance countersignature for
+// updateInstanceURL must commit to this exact nonce (spec §2.5.4 URL confirmation).
+export async function getUrlUpdateNonce(proxyAddress: `0x${string}`): Promise<bigint> {
+  return chainClient.readContract({
+    address: proxyAddress,
+    abi: identityImplAbi,
+    functionName: 'urlUpdateNonce',
+  });
+}

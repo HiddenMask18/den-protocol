@@ -47,7 +47,9 @@ Update `.env` with the deployed addresses and set `CHAIN=base` and `RPC_URL` to 
 
 ### Operator setup
 
-The instance operator wallet must be a registered DEN participant. Call `DENIdentityRegistry.register()` with the operator wallet to deploy its identity proxy.
+The instance operator wallet must be a registered DEN participant. Call `DENIdentityRegistry.register()` with the operator wallet to deploy its identity proxy. Registration is also a prerequisite for `GET /creator/url-signature` — the operator proxy is the `receivingInstanceProxy` creators pass to `updateInstanceURL`.
+
+Set `INSTANCE_PUBLIC_URL` to the instance's public base URL (no trailing slash). This is the URL creators record on-chain as their home instance; `GET /creator/url-signature` refuses to countersign anything else.
 
 For each creator hosted, **the creator** calls `DENContentRegistry.setContentOperator(instanceOpProxy)` to authorize this instance's operator wallet. This is required before sunset notices can be issued and before `POST /hoster/claim` will succeed for that creator.
 
@@ -144,6 +146,17 @@ GET /creator/portability-blob
 
 `operationalBlob` is verified by the instance (decrypted to confirm correct key was used). `portabilityBlob` is stored as-is — the instance cannot decrypt it.
 
+**Instance URL countersignature**
+
+To record this instance as their home instance on-chain, a creator calls `DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)` — which requires the receiving instance's primary wallet to countersign `keccak256(abi.encode("DEN-url-confirm", creatorProxy, url, urlUpdateNonce))` as an EIP-191 personal message. This endpoint produces that signature:
+
+```
+GET /creator/url-signature
+→ { url, receivingInstanceProxy, instanceSig, nonce }
+```
+
+The instance signs only its own configured `INSTANCE_PUBLIC_URL` (503 if unset), with the operator wallet (which must be a registered DEN participant — `receivingInstanceProxy` is its proxy). The nonce is read live from the creator's proxy contract, so a signature is valid for exactly one `updateInstanceURL` call. The client passes the three returned values straight through to the contract.
+
 **Content upload**
 
 Creators encrypt content client-side before uploading. The instance computes the SHA-256 fingerprint of the ciphertext — this is the same value to register on-chain via `DENContentRegistry.registerContent(fingerprint, tierId)`.
@@ -214,7 +227,9 @@ Body: { bio: "..." | null }
 
 **Public content designation**
 
-Marks a content item as publicly visible (accessible without a subscription) or reverts it to private. When marking public, the creator supplies the symmetric content key so the instance can include it in `GET /profile/:proxy`. The key is derived client-side: `deriveKey(masterSecret, "tier:" + tierId)`.
+Marks a content item as publicly visible (accessible without a subscription) or reverts it to private. When marking public, the creator supplies the symmetric content key so the instance can include it in `GET /profile/:proxy`.
+
+The key MUST be a fresh random per-post key generated client-side when the content was encrypted for public posting. It MUST NOT be a derivation-path key (`deriveKey(masterSecret, "tier:" + ...)`): private ciphertext is served to any authenticated participant and fingerprints are enumerable on-chain, so a published tier key would unlock every post in that tier for everyone. The instance stores the key as given and cannot verify how it was derived — key discipline is the client's responsibility.
 
 ```
 PUT /creator/content/:fingerprint/visibility
