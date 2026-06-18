@@ -37,6 +37,8 @@ setup below). With the default anvil account 1 as your operator:
 
 ```bash
 # IDENTITY_REGISTRY_ADDRESS = the value you pasted into .env
+# The key below is Foundry's well-known anvil account 1 — public, valueless, LOCAL ONLY.
+# Never use it (or any anvil default key) on a real network.
 cast send $IDENTITY_REGISTRY_ADDRESS "register()" \
   --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
   --rpc-url http://localhost:8545
