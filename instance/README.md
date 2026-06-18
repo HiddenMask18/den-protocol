@@ -31,6 +31,19 @@ cd contracts && forge script script/Deploy.s.sol --rpc-url http://localhost:8545
 
 Then paste the deployed addresses into `.env`.
 
+Finally, register the operator wallet on-chain — a fresh anvil starts with no registrations, and
+`GET /creator/url-signature` returns 503 until the operator has an identity proxy (see Operator
+setup below). With the default anvil account 1 as your operator:
+
+```bash
+# IDENTITY_REGISTRY_ADDRESS = the value you pasted into .env
+cast send $IDENTITY_REGISTRY_ADDRESS "register()" \
+  --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --rpc-url http://localhost:8545
+```
+
+Re-run this after any fresh `anvil` restart (chain state, including registrations, is wiped).
+
 ### Base Sepolia / production
 
 For a real deployment against Base Sepolia (testnet) or Base mainnet:

@@ -38,3 +38,21 @@ anvil
 ```
 
 See [Foundry docs](https://book.getfoundry.sh/) for full reference.
+
+## ABIs
+
+The hand-maintained `abis.ts` at the repo root is the single source of truth for ABIs — both the
+instance server and the furden client consume it (the client vendors a copy). It is a curated
+subset: only the functions and events those consumers call, not the full contract surface.
+
+**When you change a contract's external interface, update `abis.ts` to match.** After `forge build`,
+verify there is no drift:
+
+```bash
+# from the repo root
+bun scripts/check-abis.ts
+```
+
+It validates every entry in `abis.ts` against `contracts/out/*.json` by name and signature and exits
+non-zero on any mismatch. Wire it into CI / a pre-commit hook so a contract change can't silently
+desync the off-chain layer.

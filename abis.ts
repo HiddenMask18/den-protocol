@@ -623,8 +623,9 @@ export const purchaseStateAbi = [
       { name: 'listingId',    type: 'uint256' },
     ],
     outputs: [
-      { name: 'price', type: 'uint256' },
-      { name: 'token', type: 'address' },
+      { name: 'price',  type: 'uint256' },
+      { name: 'token',  type: 'address' },
+      { name: 'exists', type: 'bool'    },
     ],
   },
 ] as const;
@@ -641,12 +642,12 @@ export const reportRegistryAbi = [
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'contentProxy',   type: 'address' },
       { name: 'fingerprint',    type: 'bytes32' },
-      { name: 'violationType',  type: 'uint8'   },
+      { name: 'accessTimestamp', type: 'uint256' },
+      { name: 'category',       type: 'uint8'   },
       { name: 'evidenceHash',   type: 'bytes32' },
     ],
-    outputs: [],
+    outputs: [{ name: 'reportId', type: 'uint256' }],
   },
   // --- reads ---
   {
