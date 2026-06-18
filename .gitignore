@@ -10,6 +10,8 @@ contracts/cache/
 
 # Foundry broadcast (keep non-dry-run for record, ignore dry-run)
 contracts/broadcast/*/dry-run/
+# Local anvil (chain 31337) broadcasts are throwaway — deterministic addrs, churn every run
+contracts/broadcast/*/31337/
 
 # Environment files — never commit keys or RPC URLs
 .env
