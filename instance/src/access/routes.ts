@@ -103,9 +103,12 @@ accessRoutes.post('/key', requireAuth, async (c) => {
   // Retrieve the operational blob.
   // blob is nullable: NULL after a migration import before the creator re-uploads.
   type BlobRow = { blob: Uint8Array | null };
+  // Match on LOWER(creator_proxy) — PUT /creator/blob stores the proxy checksummed, so a
+  // case-sensitive compare against a lowercased argument never matches (the content and profile
+  // queries already use this LOWER() pattern for the same reason).
   const row = getDb()
     .query<BlobRow, [string]>(
-      'SELECT blob FROM master_secret_blobs WHERE creator_proxy = ?',
+      'SELECT blob FROM master_secret_blobs WHERE LOWER(creator_proxy) = ?',
     )
     .get(creator.toLowerCase());
 
