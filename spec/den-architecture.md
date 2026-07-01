@@ -455,6 +455,8 @@ Everything a user actually sees and interacts with — the interface for subscri
 
 **Open questions:** Specific migration tooling design — what the protocol supports at spec level vs what is left to client implementation. To be resolved during spec drafting.
 
+**Onboarding friction (phased amendment).** Reducing the transaction-signing and gas-token-prerequisite burden of first-time onboarding is specified in Appendix C (CREATE2 lazy identity deploy so a subscriber never pays a standalone registration tx; account abstraction + paymaster so a participant needs no gas token to begin). Not yet ratified; amends this section per §10.4 when the contract changes land.
+
 ---
 
 ## Appendix A — Resolved Design Decisions
@@ -590,7 +592,69 @@ V2 path: if threshold decryption backed by a decentralised independent custodian
 
 ## Appendix B — Open Questions Summary
 
-All architectural questions are currently resolved. Decisions deferred to V2 (ZK pseudonymous rotation, TRON/Solana identity parity) are documented with full rationale in Appendix A. Open implementation questions are tracked in [`den-spec.md`](./den-spec.md) Appendix B, which is the authoritative location.
+Decisions deferred to V2 (ZK pseudonymous rotation, TRON/Solana identity parity) are documented with full rationale in Appendix A. Open implementation questions are tracked in [`den-spec.md`](./den-spec.md) Appendix B, which is the authoritative location.
+
+**Onboarding/gas friction reduction — phased amendment in progress.** A live end-to-end run surfaced excessive transaction-signing and an ETH-prerequisite barrier (a subscriber must pay gas to register before they can subscribe). The reduction plan — CREATE2 lazy identity deploy, implicit default access grants, account abstraction with paymaster sponsorship, and a client-side signature merge — is specified in **Appendix C** below (design) and tracked normatively in [`den-spec.md`](./den-spec.md) Appendix C. Not yet ratified: the normative sections (§2 identity, §3 payment, §5 access, §13 fees, §15 onboarding) are amended per §10.4 **as each contract change lands**, not before.
+
+---
+
+## Appendix C — Onboarding and Gas Friction Reduction (Design)
+
+**Status:** Phased amendment in progress; not yet ratified. Normative phase tracker in [`den-spec.md`](./den-spec.md) Appendix C. Each phase amends its normative sections per spec §10.4 **as the contract change lands, not before.** Does not touch the fixed encryption architecture (spec §4).
+
+### C.1 Problem (live end-to-end run, 2026-07-01)
+
+The first real browser run of the full arc surfaced two frictions: **popup count** (every on-chain write is a separate wallet confirmation) and — more damaging — the **gas-token prerequisite** (a participant must already hold the chain's gas token before they can do anything; a subscriber must pay a `register()` transaction to exist before they can `subscribe()`). On Base (the target L2) the gas *amount* is cents; the barriers are the prerequisite and the number of prompts, not the cost.
+
+Writes a user currently hits: creator = `register` + `updateInstanceURL` + `setHandle` + `setTier`; posting = `registerContent` (per post) + first-paywalled `publishGrant` (plus a grant signature); subscriber = `register` + `subscribe`.
+
+### C.2 The gas floor — what always costs gas, and why
+
+Account abstraction does **not** make on-chain writes free; it shifts **who pays** and batches **how many prompts**. (4337 adds validation overhead — the win is UX, not a cheaper chain.) These are irreducible on-chain state changes; someone always pays gas for them:
+
+1. **Account existence** — deploying the proxy, or (EIP-7702) setting the EOA delegation. Foldable into the first action and sponsorable, but real.
+2. **The subscription/purchase payment** — value transfer plus escrow accounting (`_escrow[creatorProxy] += …`). The floor that cannot be designed away.
+3. **Content registration** — the censorship-resistance anchor (the instance cannot lie about what exists; §9 client-side indexing depends on it). Sponsorable/batchable, never free — and it must stay on-chain.
+
+Everything else (handle, instance URL, sign-in, the access grant for default tiers) can be eliminated, made implicit, deferred, or reduced to a gasless signature.
+
+### C.3 Why the payment carries the one user-paid cost
+
+A paymaster can sponsor everything — even the gas on `subscribe()` — but sponsorship is a subsidy someone funds, so unbounded free sponsorship is an abuse vector and MUST be gated (rate-limited, or tied to a paying relationship). The subscription/purchase payment is the natural user-paid moment: self-funding (spam costs the spammer) and already a "paying" context, so the network cost reads as "fee on your purchase," not "buy gas to exist."
+
+**Design principle:** onboarding, posting, handle, and default grants SHOULD be sponsorable to zero user gas (funded via the host-compensation fee, §13); the subscription/purchase payment is the one on-chain cost the user pays directly, bundled into checkout.
+
+### C.4 Phases
+
+Each phase is a separate amendment; land the contract change and its normative spec edits together.
+
+- **L0 — Reference-client signature merge (no contract change).** Onboarding asks for two signatures: sign-in, then a fixed message to recover the wallet public key for the key backup. Any signature already reveals the signer's public key — recover it from the sign-in signature the client already holds and drop the second prompt.
+- **L2 — Implicit default access grants.** `DENAccessGrant.verifyGrant()` recovers a signed grant whose `derivationPaths` supports cumulative tiers. For the v1 default (tier N unlocks exactly `tier:N`) the signed grant merely restates the obvious. Treat "tier N → `tier:N`" as the implicit default; require `publishGrant` (and its signature) **only** for a non-default cumulative/hierarchical grant. Removes a signature and a tx from the first paywalled post in the common case.
+- **L1 — CREATE2 lazy identity deploy.** `DENIdentityRegistry.register()` deploys with `new DENIdentityProxy(...)` (**CREATE**), so the proxy address is unknown until deployed — forcing a standalone upfront tx. Switch to **CREATE2** (salt from the wallet address) so the address is deterministic before deployment; then `subscribe()` (and a creator's first `registerContent()`) deploy the proxy **if absent in the same transaction**. Subscriber register + subscribe collapses to one tx, removing the "pay to exist before subscribing" barrier.
+- **L3 — Account abstraction + paymaster (structural).** Every participant already has a per-user smart contract (`DENIdentityProxy` → `DENIdentityImpl`) — the hard prerequisite of account abstraction is already built. Make it a 4337 smart account or delegate the EOA to it via 7702, add a **paymaster** (funded by the existing `FEE_BPS`/host compensation, gated against abuse) so users need **zero gas token**, and batch calls into one `UserOperation` (one signature/confirmation per intent). Open decision: converge on the EOA (7702) vs. route through the proxy (4337). Largest effort and security surface (paymaster abuse, validation) — do last.
+- **L4 — Batched content registration (optional).** `registerContent` takes one fingerprint per tx; accept many per call, or register a Merkle root periodically. Cuts per-post gas at the cost of proof complexity. Largely moot if L3 sponsors it.
+
+### C.5 Change map — update *as each phase lands*
+
+| Phase | Contracts | Instance | Reference client | Normative sections to amend |
+|---|---|---|---|---|
+| L0 | — | — | onboarding reuses sign-in sig for pubkey | none (client detail) |
+| L2 | `DENAccessGrant` + access gate | `access/gate.ts` default path | `ensureAccessGrant` no-op for default | spec §5.1–5.2; arch §5 |
+| L1 | `DENIdentityRegistry`, `DENIdentityProxy`, `DENSubscription`, `DENContentRegistry` | proxy-address derivation if any | onboarding/subscribe flows collapse a tx | spec §2.1–2.3, §3.4; arch §2, §15 |
+| L3 | proxy/impl (4337/7702), new paymaster, gating policy | sponsorship accounting; key delivery unchanged | UserOp/connector path | spec §2.2, §3, §13; arch §13, §15 |
+| L4 | `DENContentRegistry` | listing unchanged | composer batches | spec §4.3, §9 |
+
+Any sponsorship subsidy and its funding source MUST be stated in the fee-transparency layer (§13); rate limits for sponsored actions are governance parameters (§13.4).
+
+### C.6 Must not change
+
+- **On-chain content registration stays on-chain** — make it free-at-use via sponsorship/batching, never move it off-chain (it is the censorship-resistance guarantee).
+- **Encryption architecture (§4) is fixed** and untouched.
+- **The payment stays visible** — even under full sponsorship, the subscription/purchase network cost remains the one user-paid, checkout-bundled moment (fee transparency, §13).
+
+### C.7 Sequencing
+
+L0 → L2 → L1 → L3 → L4. Cheapest/most-contained first; the structural AA change last, after L1–L2 have simplified the call set it must batch and sponsor.
 
 ---
 

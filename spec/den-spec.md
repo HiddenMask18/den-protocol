@@ -1123,6 +1123,32 @@ A consolidated list of all open questions flagged in the sections above, for tra
 
 ---
 
+## Appendix C — Onboarding and Gas Friction Reduction (Phased Amendment)
+
+A live end-to-end run of the reference client (2026-07-01) surfaced two onboarding frictions: excessive per-step transaction signing, and a **gas-token prerequisite** — a participant must hold the chain's gas token before acting, and a subscriber must pay a `register()` transaction to exist before `subscribe()`. Design rationale, the gas-floor model, and the per-contract change map are in [`den-architecture.md`](./den-architecture.md) Appendix C.
+
+This appendix is the **normative tracker**. Each phase is a separate amendment under Section 10.4; its contract change and its normative section edits land **together**, not before. Nothing here is ratified until its row is marked Done.
+
+**Normative principles (apply as phases land):**
+
+- **The gas floor is fixed by design.** Three on-chain writes are irreducible and MUST remain on-chain: account existence, the subscription/purchase payment (value + escrow), and content registration (the censorship-resistance anchor, §4.3/§9). Account abstraction may change *who* pays and *how many* prompts, never *whether* these consume gas.
+- **Sponsorship MUST be transparent and gated.** Any gas sponsorship (paymaster) subsidy and its funding source MUST be stated in the fee-transparency layer (§13). Rate limits on sponsored actions are governance parameters (§13.4). The subscription/purchase payment SHOULD remain the one on-chain cost the user pays directly.
+- **Content registration MUST NOT move off-chain** to reduce cost; reduce it via sponsorship/batching only.
+
+**Phases:**
+
+| Phase | Change | Sections amended | Status |
+|-------|--------|------------------|--------|
+| L0 | Reference client recovers the wallet public key from the sign-in signature instead of a second signature (client-layer; no protocol change) | none (§2.2 unaffected) | Proposed |
+| L2 | Implicit default access grant: tier N ⇒ `tier:N` requires no signed grant; `publishGrant` required only for cumulative/hierarchical grants | §5.1–5.2 | Proposed |
+| L1 | CREATE2 lazy identity deploy: `subscribe()` and a creator's first `registerContent()` deploy the proxy if absent, in the same transaction — subscriber register+subscribe becomes one tx | §2.1–2.3, §3.4 | Proposed |
+| L3 | Account abstraction (EIP-4337/7702) on the per-user proxy + gated paymaster sponsorship funded via host compensation — participants need no gas token; calls batch into one signature per intent | §2.2, §3, §13, §15 | Proposed |
+| L4 | Batched/Merkle content registration (optional; amortizes per-post gas) | §4.3, §9 | Proposed |
+
+Sequence: L0 → L2 → L1 → L3 → L4 (most-contained first; structural AA last).
+
+---
+
 *DEN — Decentralized Encrypted Network*
 *Protocol Specification v0.1-draft*
 *This document contains binding implementation requirements. Companion document: `den-architecture.md`.*
