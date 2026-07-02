@@ -1139,7 +1139,7 @@ This appendix is the **normative tracker**. Each phase is a separate amendment u
 
 | Phase | Change | Sections amended | Status |
 |-------|--------|------------------|--------|
-| L0 | Reference client recovers the wallet public key from the sign-in signature instead of a second signature (client-layer; no protocol change) | none (§2.2 unaffected) | Proposed |
+| L0 | Reference client recovers the wallet public key from the sign-in signature instead of a second signature (client-layer; no protocol change) | none (§2.2 unaffected) | Implemented (furden, 2026-07-02) |
 | L2 | Implicit default access grant: tier N ⇒ `tier:N` requires no signed grant; `publishGrant` required only for cumulative/hierarchical grants | §5.1–5.2 | Proposed |
 | L1 | CREATE2 lazy identity deploy: `subscribe()` and a creator's first `registerContent()` deploy the proxy if absent, in the same transaction — subscriber register+subscribe becomes one tx | §2.1–2.3, §3.4 | Proposed |
 | L3 | Account abstraction (EIP-4337/7702) on the per-user proxy + gated paymaster sponsorship funded via host compensation — participants need no gas token; calls batch into one signature per intent | §2.2, §3, §13, §15 | Proposed |
