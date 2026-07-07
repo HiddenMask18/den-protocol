@@ -161,6 +161,17 @@ GET /creator/portability-blob
 
 `operationalBlob` is verified by the instance (decrypted to confirm correct key was used). `portabilityBlob` is stored as-is — the instance cannot decrypt it.
 
+**Master secret recovery**
+
+Returns the decrypted operational payload — the 32-byte master secret — to the authenticated creator. This is how a creator client restores its crypto state in a fresh browser session: the master secret is memory-only client-side, and the portability blob can't be decrypted with an injected wallet (no private key access).
+
+```
+GET /creator/master-secret
+→ { masterSecret: "0x..." }   (32 bytes, 0x-prefixed hex)
+```
+
+404 if no operational blob is stored for the session's proxy. This adds no new trust exposure: the instance already decrypts this exact blob on every subscriber key request (key delivery) — the endpoint only lets the creator ask for what the instance can already compute, over the same authenticated channel that delivers derived keys to subscribers.
+
 **Instance URL countersignature**
 
 To record this instance as their home instance on-chain, a creator calls `DENIdentityImpl.updateInstanceURL(url, receivingInstanceProxy, instanceSig)` — which requires the receiving instance's primary wallet to countersign `keccak256(abi.encode("DEN-url-confirm", creatorProxy, url, urlUpdateNonce))` as an EIP-191 personal message. This endpoint produces that signature:

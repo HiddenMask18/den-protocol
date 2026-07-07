@@ -7,6 +7,7 @@
 //   GET  /creator/blob-pubkey     Return the instance's per-creator ECIES public key
 //   PUT  /creator/blob            Upload pre-encrypted master secret blobs (dual-blob model)
 //   GET  /creator/blob            Check whether blob has been uploaded
+//   GET  /creator/master-secret   Return the decrypted master secret to its creator (recovery)
 //   GET  /creator/portability-blob  Return the wallet-encrypted portability blob for migration
 //   GET  /creator/url-signature   Countersignature for DENIdentityImpl.updateInstanceURL
 //   POST /creator/content         Upload encrypted content; returns SHA-256 fingerprint
@@ -157,6 +158,54 @@ creatorRoutes.get('/blob', requireAuth, (c) => {
     )
     .get(proxy);
   return c.json({ exists: row !== null && row.blob !== null });
+});
+
+// Returns the decrypted master secret to the authenticated creator (key recovery).
+//
+// Why this exists: the master secret lives only in the browser session where the creator
+// onboarded — any page reload loses it, and the portability blob cannot help (decrypting it
+// needs the wallet private key, which injected wallets never expose). Without recovery, a
+// creator who reloads permanently loses paywalled previews, paywalled composing, and
+// visibility changes.
+//
+// Trust analysis: this endpoint adds ZERO new exposure. The instance already derives the
+// per-creator private key and decrypts this exact blob on every subscriber key request
+// (see access/routes.ts) — the plaintext master secret transits this process on demand
+// today. Delivery as hex over the authenticated channel is the same class as POST
+// /access/key returning derived content keys. The only change is WHO can ask: the creator
+// themselves, for their own secret, on a session bound to a registry-authorized wallet.
+//
+// The plaintext is hex-encoded straight into the response; the local copy is zeroed
+// immediately (same discipline as key delivery).
+creatorRoutes.get('/master-secret', requireAuth, async (c) => {
+  const proxy = c.get('proxy');
+
+  type BlobRow = { blob: Uint8Array | null };
+  const row = getDb()
+    .query<BlobRow, [string]>(
+      'SELECT blob FROM master_secret_blobs WHERE LOWER(creator_proxy) = ?',
+    )
+    .get(proxy.toLowerCase());
+
+  if (!row || !row.blob) {
+    return c.json(
+      { error: 'no operational blob stored — upload blobs via PUT /creator/blob first' },
+      404,
+    );
+  }
+
+  let masterSecret: Uint8Array | undefined;
+  try {
+    try {
+      const { privKey } = deriveCreatorBlobKey(proxy);
+      masterSecret = await decryptBlob(row.blob, privKey);
+    } catch {
+      return c.json({ error: 'failed to decrypt operational blob' }, 500);
+    }
+    return c.json({ masterSecret: toHex(masterSecret) });
+  } finally {
+    masterSecret?.fill(0);
+  }
 });
 
 // Returns the portability blob for the authenticated wallet.
